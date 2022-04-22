@@ -1,12 +1,10 @@
-import numpy as np
-import numpy.typing as npt
-from skimage import filters, color
-from skimage.segmentation import watershed
-from skimage.segmentation import mark_boundaries
-from PIL import Image, ImageColor
 from typing import *
+
 import cv2 as cv
-import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image, ImageColor
+from skimage import filters
+from skimage.segmentation import watershed
 
 
 class Segmenter:
