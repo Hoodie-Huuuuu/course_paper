@@ -63,7 +63,7 @@ class Application(Frame):
         bt_open.grid(row=0, column=0, sticky=tk.EW, padx=5, pady=2)
 
         # кнопка сохранить файл
-        bt_save = Button(master=self.frame_left_side, text="Save file", width=10)
+        bt_save = Button(master=self.frame_left_side, text="Save file", width=10) #нужно добавить comand save file
         bt_save.grid(row=1, column=0, sticky=tk.EW, padx=5, pady=2)
     # <--БОКОВАЯ ПАНЕЛЬ--/>
 
@@ -144,7 +144,7 @@ class Application(Frame):
                               event.x + self.brush_size, event.y + self.brush_size,
                               fill=self.color, outline=self.color)
         # заполняем маску значением: индекс маркера
-        self.marker_mask[event.y, event.x] = self.markers[self.curr_marker][0]
+        self.marker_mask[event.y, event.x] = self.markers[self.curr_marker][0]  # в маске индекс маркера
         return
 
 
@@ -184,10 +184,6 @@ class Application(Frame):
         self.segmentator.draw_regions(self.mask)
         self.photo = ImageTk.PhotoImage(self.segmentator.rgb_marked_image)
         self.canv.create_image(0, 0, anchor='nw', image=self.photo)
-
-
-
-
 
 
 

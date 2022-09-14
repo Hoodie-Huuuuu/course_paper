@@ -17,8 +17,8 @@ class Segmenter:
         # пароги для чувствительности
         self.thresholds = {"mean": 20,
                            "var": 20,
-                           # в пикселях
-                           "radius": 100}
+                           "radius": 100  # в пикселях
+                           }
         # маркеры
         self.markers = markers
         # изображение в LAB координатах
@@ -33,9 +33,12 @@ class Segmenter:
         self.rgb_input_image_ar = np.asarray(image)
         self.gray_ar = np.asarray(image.convert('L'))
 
+        # выходная маска сегментатора
+        self.mask = np.zeros((image.height, image.width), dtype='uint8')
+
         # метод сегментации (watershed)
         self.edges = filters.sobel(self.gray_ar)
-        self.regions = watershed(self.edges, markers=1000, compactness=0.0005)
+        self.regions = watershed(self.edges, markers=700, compactness=0.001)
         return
 
 
