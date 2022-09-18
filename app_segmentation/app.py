@@ -1,7 +1,7 @@
 import tkinter as tk
 from collections import OrderedDict
 from tkinter import ttk, Frame, Button, Label
-from tkinter.filedialog import askopenfilename
+from tkinter.filedialog import askopenfilename, asksaveasfilename
 
 import numpy as np
 from PIL import Image, ImageTk
@@ -34,7 +34,6 @@ class Application(Frame):
 
         # dict["marker_name": (marker_idx, marker_hex_color)]
         self.markers = {item[0]: (i, item[1]) for i, item in enumerate(self.markers.items(), start=1)}
-        self.previous_masks_stack = []
 
         # маска последнего штришка
         self.marker_mask = None
@@ -63,7 +62,8 @@ class Application(Frame):
         bt_open.grid(row=0, column=0, sticky=tk.EW, padx=5, pady=2)
 
         # кнопка сохранить файл
-        bt_save = Button(master=self.frame_left_side, text="Save file", width=10) #нужно добавить comand save file
+        bt_save = Button(master=self.frame_left_side, text="Save file",
+                         width=10, command=self.save_file)
         bt_save.grid(row=1, column=0, sticky=tk.EW, padx=5, pady=2)
     # <--БОКОВАЯ ПАНЕЛЬ--/>
 
@@ -109,6 +109,19 @@ class Application(Frame):
         self.color = self.markers[self.curr_marker][1]
         return
 
+    def save_file(self):
+        outpath = asksaveasfilename()
+        if outpath is None:  # asksaveasfile return `None` if dialog closed with "cancel".
+            return
+        np.savez(outpath, mask=self.mask)
+
+        # npzfile = np.load(outpath + '.npz')
+        # print(npzfile.files)
+        # print(npzfile['mask'])
+        # print(np.unique(npzfile['mask']))
+
+        return
+
 
     # Открываем файл для редактирования
     def open_file(self):
@@ -119,11 +132,11 @@ class Application(Frame):
 
         # открываем картинку
         image = Image.open(filepath).convert("RGB")
-        self.mask = np.zeros((image.height, image.width), dtype='uint8')
         self.marker_mask = np.zeros((image.height, image.width), dtype='uint8')
 
         # создаем сегментатор
         self.segmentator = Segmenter(image, self.markers)
+        self.mask = self.segmentator.mask  # делает копию
         # выбираем картинку
         self.photo = ImageTk.PhotoImage(self.segmentator.rgb_marked_image)
 
@@ -150,8 +163,9 @@ class Application(Frame):
 
     # функция отправки маски в сегментатор
     def end_draw(self, event):
-        self.previous_masks_stack.append((self.mask.copy(), self.marker_mask.copy(), self.curr_marker))
-        self.mask = self.segmentator.draw_regions(self.mask, self.marker_mask, self.curr_marker, self.sens_val_scale)
+        self.segmentator.push_state(self.mask, self.marker_mask, self.curr_marker)
+        self.mask = self.segmentator.draw_regions(self.mask, self.marker_mask, self.curr_marker,
+                                                  self.sens_val_scale, change_mask=True)
         self.marker_mask = np.zeros(self.mask.shape, dtype=self.mask.dtype)
 
         # меняем картинку с добавленными изменениями от штришка
@@ -160,14 +174,13 @@ class Application(Frame):
 
 
     # установка значения ползунка чувствительности [ ]
-    # mask, marker_mask, marker = mask0, mask_marker, marker,
     def sens_changed(self, val):
         self.sens_val_scale = float(val)
-        if len(self.previous_masks_stack) == 0:
+        if self.segmentator.states_len() == 0:  # ничего не нарисовано
             return
 
-        mask, marker_mask, marker = self.previous_masks_stack[-1]
-        self.mask = self.segmentator.draw_regions(mask, marker_mask, marker, self.sens_val_scale)
+        mask, marker_mask, marker = self.segmentator.get_state(idx=-1)
+        self.mask = self.segmentator.draw_regions(mask, marker_mask, marker, self.sens_val_scale, change_mask=True)
 
         # меняем картинку с добавленными изменениями от штришка
         self.photo = ImageTk.PhotoImage(self.segmentator.rgb_marked_image)
@@ -176,11 +189,10 @@ class Application(Frame):
 
 
     def ctrl_z(self, event):
-        if len(self.previous_masks_stack) == 0:
-            print("kek")
+        if self.segmentator.states_len() == 0:
             return
 
-        self.mask = self.previous_masks_stack.pop()[0]
+        self.mask = self.segmentator.pop_state()[0]
         self.segmentator.draw_regions(self.mask)
         self.photo = ImageTk.PhotoImage(self.segmentator.rgb_marked_image)
         self.canv.create_image(0, 0, anchor='nw', image=self.photo)
