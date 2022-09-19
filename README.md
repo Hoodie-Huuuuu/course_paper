@@ -12,4 +12,4 @@ npzfile['mask']
 5) для доступа к штрихам пользователя
 ```python
 npzfile['user_marks']
-'```
+```
