@@ -65,7 +65,7 @@ class Segmenter:
             mask_rgb[filled_mask == marker_index] = self._colours_rgb[marker_index]
 
         if curr_marker == "None" or marker_mask is None:
-            self._rgb_marked_image = self.make_image(mask_rgb)
+            self._rgb_marked_image = self._make_image(mask_rgb)
             if change_mask:
                 self._mask = filled_mask.copy()
             return self._mask.copy()
@@ -85,13 +85,13 @@ class Segmenter:
         for region_num in marked_regions:
             #  окно просморта -> номера суперпикселей, попавших в окно
             radius = int(self._thresholds['radius'] * sens)
-            sps_around = self.sps_around(region_num, radius)
-            properties = self.region_property(region_num)
+            sps_around = self._sps_around(region_num, radius)
+            properties = self._region_property(region_num)
 
             for superpixel_num in sps_around:
                 if superpixel_num in processed_area:
                     break
-                properties_superpixel = self.region_property(superpixel_num)
+                properties_superpixel = self._region_property(superpixel_num)
 
                 all_prop_good = True
                 for prop_name, prop_val in properties_superpixel.items():
@@ -111,11 +111,11 @@ class Segmenter:
         # полупрозрачная маска на картинке
         if change_mask:
             self._mask = res_mask.copy()
-        self._rgb_marked_image = self.make_image(mask_rgb)
+        self._rgb_marked_image = self._make_image(mask_rgb)
         return res_mask
 
     # возвращет номера суперпикселей вокруг
-    def sps_around(self, region_num: int, radius: int):
+    def _sps_around(self, region_num: int, radius: int):
         indexes = (np.where(self._regions == region_num))
         length = indexes[0].shape[0]
         indexes = list(zip(indexes[0], indexes[1]))
@@ -135,15 +135,13 @@ class Segmenter:
 
         return list(np.unique(self._regions[y1: y2 + 1, x1: x2 + 1]))
 
-
-    def make_image(self, mask_rgb: np.ndarray, alpha=0.4):
+    def _make_image(self, mask_rgb: np.ndarray, alpha=0.4):
         img_ar = np.where(mask_rgb, self._gray_ar[:, :, np.newaxis] * alpha, self._rgb_input_image_ar)
         img_ar = img_ar + (1 - alpha) * mask_rgb
         img = Image.fromarray(np.clip(img_ar.astype(int), 0, 255).astype('uint8'), "RGB")
         return img
 
-
-    def region_property(self, number: int) -> Dict[str, float]:
+    def _region_property(self, number: int) -> Dict[str, float]:
         mask = (self._regions == number)
         count = np.sum(mask)
         mean = np.sum(self._lab_image[mask, ...], axis=0) / count
@@ -152,13 +150,11 @@ class Segmenter:
         # variance = np.linalg.norm(variance)
         return {"mean": mean, "var": variance}
 
-
     def push_state(self, mask: np.array, marker_mask: np.array, curr_marker, change_mask=False):
         if change_mask:
             self._mask = mask.copy()
         self._previous_masks_stack.append((mask.copy(), marker_mask.copy(), curr_marker))
         return
-
 
     def pop_state(self):
         if len(self._previous_masks_stack) == 0:
@@ -166,7 +162,6 @@ class Segmenter:
         state = self._previous_masks_stack.pop()
         self._mask = np.copy(state[0])
         return state
-
 
     @property
     def mask(self):
@@ -182,6 +177,11 @@ class Segmenter:
     def get_state(self, idx: int = -1):
         return self._previous_masks_stack[idx]
 
+    def get_user_marks(self) -> np.array:
+        res = np.zeros(shape=self._mask.shape)
+        for _, marker_mask, marker in self._previous_masks_stack:
+            res = res + marker_mask
+        return res
 
 
 
