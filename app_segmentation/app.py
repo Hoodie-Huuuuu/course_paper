@@ -31,7 +31,7 @@ class Application(Frame):
                 "covelline": "#eaff99",
             }
         )
-        self.curr_marker, self.color = list(self.markers.items())[0]
+        self.curr_marker, self._color = list(self.markers.items())[0]
 
         # dict["marker_name": (marker_idx, marker_hex_color)]
         self.markers = {
@@ -40,12 +40,12 @@ class Application(Frame):
         }
 
         # маска последнего штришка
-        self.marker_mask = None
+        self._marker_mask = None
         # итоговая маска
         self.mask = None
         # отображаемая картинка
-        self.photo = None
-
+        self._photo = None
+        # сегментатор входного изображения
         self.segmenter = None
 
         self.initUI()
@@ -53,6 +53,7 @@ class Application(Frame):
     # создать интерфейс
     def initUI(self):
         self.pack(fill=tk.BOTH, expand=True)
+        self.master.bind("<Control-z>", self.ctrl_z)
         self.master.bind("<Control-z>", self.ctrl_z)
         # для растяжения боковой панели по вертикали
         self.rowconfigure(1, weight=1)
@@ -108,6 +109,18 @@ class Application(Frame):
         lbl_sens = Label(master=frame_sens, text="Sensitivity:")
         lbl_sens.pack(side=tk.LEFT, padx=5, pady=2)
 
+        ###################################
+        # dv = tk.DoubleVar()
+        #
+        # def callback():
+        #     print('callback')
+        #     if self.segmenter is None:
+        #         return False
+        #     self.sens_changed(dv.get())
+        #     return True
+        #
+        # scale = tk.Entry(frame_sens, textvariable=dv, validate="focusout", validatecommand=callback)
+
         scale = tk.Scale(
             master=frame_sens,
             from_=0,
@@ -127,7 +140,7 @@ class Application(Frame):
     # выбор маркера
     def marker_changed(self, event):
         self.curr_marker = event.widget.get()
-        self.color = self.markers[self.curr_marker][1]
+        self._color = self.markers[self.curr_marker][1]
         return
 
     def save_file(self):
@@ -135,20 +148,11 @@ class Application(Frame):
             return
         # диалог
         outpath = asksaveasfilename()
-        if (
-                outpath is None
-        ):  # asksaveasfile return `None` if dialog closed with "cancel".
+        if outpath is None:  # asksaveasfile return `None` if dialog closed with "cancel".
             return
 
         user_marks = self.segmenter.get_user_marks()
-        print(np.unique(user_marks))
         np.savez(outpath, mask=self.mask, user_marks=user_marks)
-
-        # npzfile = np.load(outpath + '.npz')
-        # print(npzfile.files)
-        # print(npzfile['mask'])
-        # print(np.unique(npzfile['mask']))
-
         return
 
     # Открываем файл для редактирования
@@ -160,13 +164,13 @@ class Application(Frame):
 
         # открываем картинку
         image = Image.open(filepath).convert("RGB")
-        self.marker_mask = np.zeros((image.height, image.width), dtype="uint8")
+        self._marker_mask = np.zeros((image.height, image.width), dtype="uint8")
 
         # создаем сегментатор
         self.segmenter = Segmenter(image, self.markers)
         self.mask = self.segmenter.mask  # делает копию
-        # выбираем картинку
-        self.photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
+        # создаем картинку
+        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
 
         # полотно
         self.canv = tk.Canvas(
@@ -174,10 +178,8 @@ class Application(Frame):
         )
         self.canv.grid(row=1, column=1)
         self.canv.bind("<B1-Motion>", self.draw)
-
-        # маска для отправки меток в сегментатор
         self.canv.bind("<ButtonRelease>", self.end_draw)
-        self.canv.create_image(0, 0, anchor="nw", image=self.photo)
+        self.canv.create_image(0, 0, anchor="nw", image=self._photo)
         return
 
     # рисование (полотно появляется после загрузки картинки)
@@ -187,30 +189,28 @@ class Application(Frame):
             event.y - self.brush_size,
             event.x + self.brush_size,
             event.y + self.brush_size,
-            fill=self.color,
-            outline=self.color,
+            fill=self._color,
+            outline=self._color,
         )
-        # заполняем маску значением: индекс маркера
-        self.marker_mask[event.y, event.x] = self.markers[self.curr_marker][
-            0
-        ]  # в маске индекс маркера
+        # заполняем маску значением - индекс маркера
+        self._marker_mask[event.y, event.x] = self.markers[self.curr_marker][0]
         return
 
     # функция отправки маски в сегментатор
     def end_draw(self, event):
-        self.segmenter.push_state(self.mask, self.marker_mask, self.curr_marker)
         self.mask = self.segmenter.draw_regions(
             self.mask,
-            self.marker_mask,
+            self._marker_mask != 0,  # must be bool
             self.curr_marker,
             self.sens_val_scale,
-            change_mask=True,
+            change_segmenter_mask=True,
+            save_state=True
         )
-        self.marker_mask = np.zeros(self.mask.shape, dtype=self.mask.dtype)
+        self._marker_mask = np.zeros(self.mask.shape, dtype=self.mask.dtype)
 
         # меняем картинку с добавленными изменениями от штришка
-        self.photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
-        self.canv.create_image(0, 0, anchor="nw", image=self.photo)
+        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
+        self.canv.create_image(0, 0, anchor="nw", image=self._photo)
 
     # установка значения ползунка чувствительности [ ]
     def sens_changed(self, val):
@@ -218,24 +218,20 @@ class Application(Frame):
         if self.segmenter.states_len() == 0:  # ничего не нарисовано
             return
 
-        mask, marker_mask, marker = self.segmenter.get_state(idx=-1)
-        self.mask = self.segmenter.draw_regions(
-            mask, marker_mask, marker, self.sens_val_scale, change_mask=True
-        )
+        self.mask = self.segmenter.new_sens(self.sens_val_scale)
 
         # меняем картинку с добавленными изменениями от штришка
-        self.photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
-        self.canv.create_image(0, 0, anchor="nw", image=self.photo)
+        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
+        self.canv.create_image(0, 0, anchor="nw", image=self._photo)
         return
 
     def ctrl_z(self, event):
-        if self.segmenter.states_len() == 0:
+        if self.segmenter is None or self.segmenter.states_len() == 0:
             return
-
+        print('ctrl+z')
         self.mask = self.segmenter.pop_state()[0]
-        self.segmenter.draw_regions(self.mask)
-        self.photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
-        self.canv.create_image(0, 0, anchor="nw", image=self.photo)
+        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
+        self.canv.create_image(0, 0, anchor="nw", image=self._photo)
 
 
 def main():
