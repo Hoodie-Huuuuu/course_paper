@@ -1,8 +1,9 @@
+import os
 import tkinter as tk
 from collections import OrderedDict
 from tkinter import ttk, Frame, Button, Label
-from typing import *
 from tkinter.filedialog import askopenfilename, asksaveasfilename
+from typing import *
 
 import numpy as np
 from PIL import Image, ImageTk
@@ -15,6 +16,7 @@ class Application(Frame):
         super().__init__(master=parent)
         self.brush_size = 2
         self.sens_val_scale = 0
+        self.transparency_val = 0.5
         # цвета маркеров
         self.markers = OrderedDict(
             {
@@ -168,6 +170,27 @@ class Application(Frame):
 
         frame_sens.pack(side=tk.LEFT)
 
+        # прозрачность маски
+        frame_transparency = Frame(master=self.frame_bar)
+
+        lbl_transparency = Label(master=frame_transparency, text="Transparency:")
+        lbl_transparency.pack(side=tk.LEFT, padx=5, pady=2)
+
+        scale_tr = tk.Scale(
+            master=frame_transparency,
+            from_=0,
+            to=1,
+            resolution=0.01,
+            sliderlength=25,
+            orient="horizontal",
+            length=200,
+            command=self.transparency_changed,
+        )
+        scale_tr.set(self.transparency_val) # default value
+        scale_tr.pack(side=tk.LEFT, padx=5, pady=2)
+
+        frame_transparency.pack(side=tk.LEFT)
+
     # <--ВЕРХНЯЯ ПАНЕЛЬ--/>
 
     def save_file(self):
@@ -235,11 +258,20 @@ class Application(Frame):
             self.curr_marker,
             self.sens_val_scale,
             change_segmenter_mask=True,
-            save_state=True
+            save_state=True,
+            alpha=self.transparency_val
         )
         self._marker_mask = np.zeros(self.mask.shape, dtype=self.mask.dtype)
 
         # меняем картинку с добавленными изменениями от штришка
+        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
+        self.canv.create_image(0, 0, anchor="nw", image=self._photo)
+
+    def transparency_changed(self, val):
+        self.transparency_val = float(val)
+        self.segmenter.draw_regions(self.mask, change_segmenter_mask=False, save_state=False,
+                                    alpha=self.transparency_val)
+
         self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
         self.canv.create_image(0, 0, anchor="nw", image=self._photo)
 
@@ -249,7 +281,7 @@ class Application(Frame):
         if self.segmenter.states_len() == 0:  # ничего не нарисовано
             return
 
-        self.mask = self.segmenter.new_sens(self.sens_val_scale)
+        self.mask = self.segmenter.new_sens(self.sens_val_scale, self.transparency_val)
 
         # меняем картинку с добавленными изменениями от штришка
         self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)

@@ -1,13 +1,15 @@
+# from skimage.segmentation import mark_boundaries
+from dataclasses import dataclass
 from typing import *
 
 import cv2 as cv
 import numpy as np
 import numpy.typing as npt
 from PIL import Image, ImageColor
+from icecream import ic
 from skimage import filters
-from skimage.segmentation import watershed, slic, felzenszwalb, quickshift
-# from skimage.segmentation import mark_boundaries
-from dataclasses import dataclass
+from skimage.segmentation import slic
+
 import utils
 
 
@@ -84,7 +86,7 @@ class Segmenter:
     # закрашивает суперпиксели в соответсвии с данными метками и чувствительностью
     def draw_regions(self, filled_mask: np.ndarray, marker_mask: npt.NDArray[np.bool] = None,
                      curr_marker: str = "None", sens: float = 0, change_segmenter_mask=True,
-                     save_state=True) -> np.ndarray:
+                     save_state=True, alpha=0.5) -> np.ndarray:
         """
         :param filled_mask: ndarray(image.height, image.width) - массив заполненный метками маркеров
         :param marker_mask: ndarray(image.height, image.width) - массив с картой последнего штриха пользователя
@@ -92,6 +94,7 @@ class Segmenter:
         :param sens: float - чувствительность
         :param change_segmenter_mask: нужно ли менять маску сегментатора на ту, что нарисует этот метод
         :param save_state: нужно ли сохранять предыдущее состояние
+        :param alpha: прозрачность цветной маски
         :return метод возвращает результирующую маску
 
         draw_refions(mask) - просто отрисует маску с маркерами заданными при создании сегментатора
@@ -99,7 +102,7 @@ class Segmenter:
 
         if curr_marker == "None" or marker_mask is None:
             mask_rgb = self._get_rgb_mask(mask_template=filled_mask)
-            self._rgb_marked_image = self._make_image(mask_rgb)
+            self._rgb_marked_image = self._make_image(filled_mask, mask_rgb, alpha=alpha)
             if change_segmenter_mask:
                 self._mask = filled_mask.copy()
             return self._mask.copy()
@@ -166,20 +169,21 @@ class Segmenter:
         if change_segmenter_mask:
             self._mask = res_mask.copy()
         mask_rgb = self._get_rgb_mask(mask_template=res_mask)
-        self._rgb_marked_image = self._make_image(mask_rgb)
+        self._rgb_marked_image = self._make_image(res_mask, mask_rgb, alpha=alpha)
         return res_mask
 
-    def new_sens(self, val: float) -> np.array:
+    def new_sens(self, sens_val: float, transparensy: float) -> np.array:
         """
         перерисовывает маску с новым значением чувствительности
-        :param val: новое значение чувствительности
+        :param sens_val: новое значение чувствительности
+        :param transparency: прозрачность
         :return: копия маски
         """
         mask, marker_mask, marker, _ = self._get_state(idx=-1)
         print(
             f"mask = {type(mask)}, marker_mask = {type(marker_mask)}, marker = {type(marker)}, pixels = {len(np.unique(_))}")
         self._mask = self.draw_regions(
-            mask, marker_mask != 0, marker, val, change_segmenter_mask=False, save_state=False
+            mask, marker_mask != 0, marker, sens_val, change_segmenter_mask=False, save_state=False, alpha=transparensy
             # все равно вернется маска
         )
         return self._mask.copy()
@@ -371,10 +375,15 @@ class Segmenter:
 
         return list(np.unique(self._regions[y1: y2 + 1, x1: x2 + 1]))
 
-    def _make_image(self, mask_rgb: np.ndarray, alpha=0.5):
+    def _make_image(self, marker_mask_2d: np.ndarray, mask_rgb: np.ndarray, alpha=0.5):
+        ic(alpha)
+
+        if alpha > 1 or alpha < 0:
+            raise ValueError
+
         img_ar = np.where(
-            mask_rgb,
-            self._img_repr['gray'][:, :, np.newaxis] * alpha + (1 - alpha) * mask_rgb,
+            (marker_mask_2d != 0)[:, :, np.newaxis],
+            mask_rgb * (1 - alpha) + alpha * self._img_repr['rgb'],
             self._img_repr['rgb']
         )
 

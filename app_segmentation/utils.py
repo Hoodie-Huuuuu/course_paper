@@ -1,16 +1,13 @@
 from typing import *
-from PIL import Image
+
 import numpy as np
 from skimage.segmentation import watershed, slic, felzenszwalb, quickshift
-from tkinter import ttk, Frame, Button, Label
 
 
 # нумерация всегда с единицы
 def init_segmentation(image_repr,
                       method: Literal["slic", "watershed", "quick_shift", "fwb"],
                       **method_params):
-    # sigma=0, compactness=5, n_segments=600, ratio=0.5, max_dist=6,
-    # min_size=50):
     """
     :param image_repr: dictionary of image representations
                       Any image if method == "slic"
