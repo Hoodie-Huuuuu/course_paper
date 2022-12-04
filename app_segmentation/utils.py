@@ -1,13 +1,15 @@
 from typing import *
 
+from icecream import ic
 import numpy as np
 from skimage.segmentation import watershed, slic, felzenszwalb, quickshift
 
+import numpy.typing as npt
 
 # нумерация всегда с единицы
-def init_segmentation(image_repr,
-                      method: Literal["slic", "watershed", "quick_shift", "fwb"],
-                      **method_params):
+def segmentation(image_repr,
+                 method: Literal["slic", "watershed", "quick_shift", "fwb"],
+                 **method_params):
     """
     :param image_repr: dictionary of image representations
                       Any image if method == "slic"
@@ -25,10 +27,10 @@ def init_segmentation(image_repr,
 
     Felzenszwalb parameters
     :param min_size: Minimum component size. Enforced using postprocessing.
-    :return: regions, num of last region
+    :return: numerated regions from 1, num of last region == count of regions
     """
     regions = None
-    print(method_params, type(method_params))
+    ic(method_params, type(method_params))
 
     if method == "slic":
         regions = slic(image_repr['lab'],
@@ -61,6 +63,49 @@ def init_segmentation(image_repr,
 def renumerate_from_1(regions):
     min_num = np.amin(regions)
     regions += 1 if min_num == 0 else 0
+    return
+
+def renumerate_regions(regions: np.ndarray, sorted_nums_of_pixels, start=0):
+    for j, num in enumerate(sorted_nums_of_pixels, start=start):
+        regions[regions == num] = j
+
+    return
+
+
+def additionally_split(img_crop: np.ndarray, zone_to_split: npt.NDArray[np.bool],
+                        old_marker_mask: npt.NDArray[np.bool], new_marker_mask: npt.NDArray[np.bool],
+                        n_segments: int =5, numeration_start: int=0):
+    # нумерация с 0 или 1 неважно
+    good_segmentation = False  # True когда маркеры в разных суперпикселях
+    new_regions = None
+
+    while not good_segmentation:
+        print('marked_by_user')
+        print('\ndo additional segmentation')
+        new_regions = slic(img_crop, n_segments=n_segments, compactness=5, sigma=1, start_label=1)
+        new_regions = np.where(zone_to_split, new_regions, -1)
+
+        new_pixels_under_old_marks = np.unique(np.where(
+            old_marker_mask, new_regions, -1
+        ))
+        new_pixels_under_old_marks = new_pixels_under_old_marks[new_pixels_under_old_marks != -1]
+        print(f"new pixels under OLD marks {new_pixels_under_old_marks}")
+
+        new_marks_in_curr_pixel = np.where(zone_to_split, new_marker_mask, 0)
+        new_pixels_under_new_marks = np.unique(np.where(
+            new_marks_in_curr_pixel != 0, new_regions, -1
+        ))
+        new_pixels_under_new_marks = new_pixels_under_new_marks[new_pixels_under_new_marks != -1]
+        print(f"new pixels under NEW marks {new_pixels_under_new_marks}")
+
+        if np.intersect1d(
+                ar1=new_pixels_under_old_marks,
+                ar2=new_pixels_under_new_marks,
+                assume_unique=True).shape[0] == 0:
+            good_segmentation = True
+        n_segments *= 2
+    return new_regions
+
 
 # crop_height = ymax - ymin
 # crop_width = xmax - xmin

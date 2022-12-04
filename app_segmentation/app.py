@@ -1,4 +1,5 @@
 import os
+from server import Server
 import tkinter as tk
 from collections import OrderedDict
 from tkinter import ttk, Frame, Button, Label
@@ -6,20 +7,27 @@ from tkinter.filedialog import askopenfilename, asksaveasfilename
 from typing import *
 
 import numpy as np
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageColor
+from icecream import ic
+import app_utils
 
-from segmenter import Segmenter
-
+from skimage.segmentation import mark_boundaries
 
 class Application(Frame):
     def __init__(self, parent):
         super().__init__(master=parent)
+
+        #todo переделать сервер
+        self.server = Server()
+
         self.brush_size = 2
         self.sens_val_scale = 0
         self.transparency_val = 0.5
+
         # цвета маркеров
         self.markers = OrderedDict(
             {
+                "background": "#1c1818",
                 "chalcopyrite": "#ff0000",
                 "galena": "#cbff00",
                 "magnetite": "#00ff66",
@@ -35,14 +43,6 @@ class Application(Frame):
             }
         )
 
-        self.methods = OrderedDict({"SLIC": "slic",
-                                    "Watershed": "watershed",
-                                    "Quick shift": "quick_shift",
-                                    "Felzenszwalb": "fwb"})
-        self.params = {}  # словарь параметров для каждого метода, заполняется в интерфейсе
-
-        self.curr_method = list(self.methods.values())[0]
-
         self.curr_marker, self._color = list(self.markers.items())[0]
 
         # dict["marker_name": (marker_idx, marker_hex_color)]
@@ -51,20 +51,37 @@ class Application(Frame):
             for i, item in enumerate(self.markers.items(), start=1)
         }
 
+        # список цветов в rgb
+        hex2rgb = lambda hex_colour: ImageColor.getcolor(hex_colour, "RGB")
+        self._colours_rgb = {i: hex2rgb(hex_color) for i, hex_color in self.markers.values()}
+
+        self.methods = OrderedDict({"SLIC": "slic",
+                                    "Watershed": "watershed",
+                                    "Quick shift": "quick_shift",
+                                    "Felzenszwalb": "fwb"})
+        self.params = {}  # словарь параметров для каждого метода, заполняется в интерфейсе
+
+        self.curr_method = list(self.methods.values())[0]
+
+
         # маска последнего штришка
         self._marker_mask = None
+        
         # итоговая маска
         self.mask = None
 
         # widgets
         self.method_params_widget = None
         self.button_segment = None
-        self._photo = None  # отображаемая картинка
 
-        # сегментатор входного изображения
+        # сегментатор изображения
         self.segmenter = None
 
         self._curr_image = None
+        self._curr_image_as_array = None
+
+        self._rgb_marked_image = None
+        self._photo = None
 
         self.initUI()
 
@@ -112,7 +129,8 @@ class Application(Frame):
         cmb_methods.current(0)  # ///////////////////////////
         cmb_methods.pack(padx=5, pady=2)
 
-        self.set_params_widget(self.curr_method, self.method_frame)  # c кнопкой
+        # рисует ползунки для параметров c кнопкой сегментацией в зависимости от метода
+        self.set_params_widget(self.curr_method, self.method_frame)
         self.method_frame.grid(row=2, column=0, sticky=tk.EW, padx=5, pady=30)
 
         # <--БОКОВАЯ ПАНЕЛЬ--/>
@@ -194,15 +212,16 @@ class Application(Frame):
     # <--ВЕРХНЯЯ ПАНЕЛЬ--/>
 
     def save_file(self):
-        if self.segmenter is None:
-            return
-        # диалог
-        outpath = asksaveasfilename()
-        if outpath is None:  # asksaveasfile return `None` if dialog closed with "cancel".
-            return
-
-        user_marks = self.segmenter.get_user_marks()
-        np.savez(outpath, mask=self.mask, user_marks=user_marks)
+        ic("кнопка нажимается")
+        # if self.segmenter is None:
+        #     return
+        # # диалог
+        # outpath = asksaveasfilename()
+        # if outpath is None:  # asksaveasfile return `None` if dialog closed with "cancel".
+        #     return
+        #
+        # user_marks = self.segmenter.get_user_marks()
+        # np.savez(outpath, mask=self.mask, user_marks=user_marks)
         return
 
     # Открываем файл для редактирования
@@ -215,13 +234,16 @@ class Application(Frame):
         # открываем картинку
         image = Image.open(filepath).convert("RGB")
         self._curr_image = image
+        self._curr_image_as_array = np.asarray(image)
+
+        # маска для штрихов
         self._marker_mask = np.zeros((image.height, image.width), dtype="uint8")
 
         # создаем сегментатор
-        self.segmenter = Segmenter(image, self.markers, self.curr_method, **self.params)
-        self.mask = self.segmenter.mask  # делает копию
-        # создаем картинку
-        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
+        # todo grpc
+        self.server.MakeSegmenter(image, self.markers, self.curr_method, **self.params)
+
+        self.mask = np.zeros((image.height, image.width), dtype="uint8")
 
         # полотно
         self.canv = tk.Canvas(
@@ -230,7 +252,9 @@ class Application(Frame):
         self.canv.grid(row=1, column=1)
         self.canv.bind("<B1-Motion>", self.draw)
         self.canv.bind("<ButtonRelease>", self.end_draw)
-        self.canv.create_image(0, 0, anchor="nw", image=self._photo)
+
+        # создаем картинку
+        self.render_image(self._curr_image)
 
         # делаем доступной кнопку сохранить
         self.bt_save['state'] = "normal"
@@ -246,55 +270,66 @@ class Application(Frame):
             fill=self._color,
             outline=self._color,
         )
-        # заполняем маску значением - индекс маркера
+        #todo заполнять все пиксели под маркером
+        #заполняем маску значением - индекс маркера
         self._marker_mask[event.y, event.x] = self.markers[self.curr_marker][0]
         return
 
     # функция отправки маски в сегментатор
     def end_draw(self, event):
-        self.mask = self.segmenter.draw_regions(
-            self.mask,
-            self._marker_mask != 0,  # must be bool
-            self.curr_marker,
-            self.sens_val_scale,
-            change_segmenter_mask=True,
-            save_state=True,
-            alpha=self.transparency_val
-        )
+        #todo grpc
+        self.mask = self.server.GetMask(self._marker_mask, self.curr_marker, self.sens_val_scale)
+
+        # обновить отправляемую маску
         self._marker_mask = np.zeros(self.mask.shape, dtype=self.mask.dtype)
 
+        # создать изображение с маской
+        self._rgb_marked_image = app_utils.get_image(
+            self.mask, source_image=self._curr_image_as_array, colors_rgb=self._colours_rgb, alpha=self.transparency_val)
+
         # меняем картинку с добавленными изменениями от штришка
-        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
+        self.render_image(self._rgb_marked_image)
+
+    def render_image(self, image):
+        self._photo = ImageTk.PhotoImage(image)
         self.canv.create_image(0, 0, anchor="nw", image=self._photo)
+        return
 
     def transparency_changed(self, val):
         self.transparency_val = float(val)
-        self.segmenter.draw_regions(self.mask, change_segmenter_mask=False, save_state=False,
-                                    alpha=self.transparency_val)
-
-        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
-        self.canv.create_image(0, 0, anchor="nw", image=self._photo)
+        if self._curr_image is None:
+            return
+        self._rgb_marked_image = app_utils.get_image(
+            self.mask, source_image=self._curr_image_as_array, colors_rgb=self._colours_rgb, alpha=self.transparency_val)
+        self.render_image(self._rgb_marked_image)
 
     # установка значения ползунка чувствительности [ ]
     def sens_changed(self, val):
         self.sens_val_scale = float(val)
-        if self.segmenter.states_len() == 0:  # ничего не нарисовано
+        if self.server.StatesLen() == 0: # ничего не нарисовано
             return
 
-        self.mask = self.segmenter.new_sens(self.sens_val_scale, self.transparency_val)
+        # todo grpc
+        # тут нужна будет асинхронность
+        self.mask = self.server.NewSens(self.sens_val_scale)
 
-        # меняем картинку с добавленными изменениями от штришка
-        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
-        self.canv.create_image(0, 0, anchor="nw", image=self._photo)
+        self._rgb_marked_image = app_utils.get_image(
+            self.mask, source_image=self._curr_image_as_array, colors_rgb=self._colours_rgb, alpha=self.transparency_val)
+        self.render_image(self._rgb_marked_image)
         return
 
     def ctrl_z(self, event):
-        if self.segmenter is None or self.segmenter.states_len() == 0:
-            return
         print('ctrl+z')
-        self.mask = self.segmenter.pop_state()[0]
-        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
-        self.canv.create_image(0, 0, anchor="nw", image=self._photo)
+        # todo grpc
+        if self.server.StatesLen() == 0: # ничего не нарисовано
+            return
+
+        old_mask = self.server.PopState()
+        self.mask = old_mask
+
+        self._rgb_marked_image = app_utils.get_image(
+            self.mask, source_image=self._curr_image_as_array, colors_rgb=self._colours_rgb, alpha=self.transparency_val)
+        self.render_image(self._rgb_marked_image)
 
     # выбор маркера
     def marker_changed(self, event):
@@ -307,24 +342,22 @@ class Application(Frame):
         self.curr_method = self.methods[event.widget.get()]
         self.set_params_widget(self.curr_method, self.method_frame)  # c кнопкой
 
-    # todo сделать перерисовку по старым меткам юзера
+    # todo ДОБАВИТЬ ФИКСАЦИЮ в СЕГМЕНТАТОР
     def handler_segment_button(self):
         print("start segmentation for " + self.curr_method)
 
         # создаем сегментатор
-        states = self.segmenter.get_states()
-        self.segmenter = Segmenter(self._curr_image, self.markers, self.curr_method, **self.params)
+        # todo grpc
+        # todo ЗАЙДИ ТОЛЬКО В ЭТОТ МЕТОД
+        #self.mask = self.server.NewMethod()
 
-        self.segmenter.load_user_marks(states, self.sens_val_scale)
-
-        self.mask = self.segmenter.mask  # делает копию
         # создаем картинку
-        self._photo = ImageTk.PhotoImage(self.segmenter.rgb_marked_image)
-
-        # полотно
-        self.canv.create_image(0, 0, anchor="nw", image=self._photo)
+        self._rgb_marked_image = app_utils.get_image(
+            self.mask, source_image=self._curr_image_as_array, colors_rgb=self._colours_rgb, alpha=self.transparency_val)
+        self.render_image(self._rgb_marked_image)
         return
 
+    # todo переделать метод по красивее
     def set_params_widget(self, method: Literal["slic", "watershed", "quick_shift", "fwb"], parent_widget):
         """
         :param method:
@@ -339,7 +372,7 @@ class Application(Frame):
             self.button_segment.destroy()
 
         self.method_params_widget = Frame(master=parent_widget, relief=tk.RAISED, borderwidth=1)
-        # todo переделать метод по красивее
+
         if method == "slic" or method == "watershed":
             # num of superpixels
             lbl_n_segments = Label(master=self.method_params_widget, text="num of superpixels")

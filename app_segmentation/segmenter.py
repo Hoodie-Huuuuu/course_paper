@@ -8,7 +8,7 @@ import numpy.typing as npt
 from PIL import Image, ImageColor
 from icecream import ic
 from skimage import filters
-from skimage.segmentation import slic
+
 
 import utils
 
@@ -44,19 +44,13 @@ class Segmenter:
         self._markers = markers
 
         # стек состояний маски
-        # на любом шаге лежит (предыдущая маска, новые штрихи на этой маске, номермаркера, деление на суперпиксели)
+        # на любом шаге лежит (предыдущая маска, новые штрихи на этой маске, номер маркера, деление на суперпиксели)
         self._states_stack = []
 
-        # список цветов в rgb
-        hex2rgb = lambda hex_colour: ImageColor.getcolor(hex_colour, "RGB")
-        self._colours_rgb = {i: hex2rgb(hex_color) for i, hex_color in self._markers.values()}
-
-        # входное изображение (изначально без разметок)
-        # todo потом отрисовывать изображене будет приложение, а не сегментатоор
-        self._rgb_marked_image = image
-
-        # выходная маска сегментатора и все штрихи пользователя
+        # выходная маска сегментатора и все штрихи пользователя (будет отправлятся как массив байт сервером)
         self._mask = np.zeros((image.height, image.width), dtype='uint8')
+
+        # todo отправлять как 1 json file сервером
         self._user_marks = np.zeros((image.height, image.width), dtype='uint8')
 
         gray = np.asarray(image.convert('L'))
@@ -67,7 +61,7 @@ class Segmenter:
             'edges': filters.sobel(gray)
         }
 
-        self._regions, self._last_num_of_superpixels = utils.init_segmentation(
+        self._regions, self._last_num_of_superpixels = utils.segmentation(
             image_repr=self._img_repr,
             method=method,
             **method_params,
@@ -83,29 +77,31 @@ class Segmenter:
         print(f"num of superpixels is {len(np.unique(self._regions))}")
         return
 
+    # def save_regions(self, filled_mask: np.ndarray):
+    #     if self._mask.shape != filled_mask.shape:
+    #         raise ValueError(f"cant save mask, shape must be {self._mask.shape}, but got {filled_mask.shape}")
+    #     self._mask = filled_mask.copy()
+    #     return
+
     # закрашивает суперпиксели в соответсвии с данными метками и чувствительностью
-    def draw_regions(self, filled_mask: np.ndarray, marker_mask: npt.NDArray[np.bool] = None,
+    def mark_regions(self, filled_mask: np.ndarray, marker_mask: npt.NDArray[np.bool] = None,
                      curr_marker: str = "None", sens: float = 0, change_segmenter_mask=True,
-                     save_state=True, alpha=0.5) -> np.ndarray:
+                     save_state=True) -> np.ndarray:
         """
         :param filled_mask: ndarray(image.height, image.width) - массив заполненный метками маркеров
-        :param marker_mask: ndarray(image.height, image.width) - массив с картой последнего штриха пользователя
-        :param curr_marker:  str - имя маркера, которым пользователь только что закончил рисовать
+        :param marker_mask: ndarray(image.height, image.width) - булевский массив с картой последнего штриха пользователя
+        :param curr_marker: str - имя маркера, которым пользователь только что закончил рисовать
         :param sens: float - чувствительность
         :param change_segmenter_mask: нужно ли менять маску сегментатора на ту, что нарисует этот метод
         :param save_state: нужно ли сохранять предыдущее состояние
         :param alpha: прозрачность цветной маски
         :return метод возвращает результирующую маску
 
-        draw_refions(mask) - просто отрисует маску с маркерами заданными при создании сегментатора
+        mark_regions(mask) - просто
         """
 
         if curr_marker == "None" or marker_mask is None:
-            mask_rgb = self._get_rgb_mask(mask_template=filled_mask)
-            self._rgb_marked_image = self._make_image(filled_mask, mask_rgb, alpha=alpha)
-            if change_segmenter_mask:
-                self._mask = filled_mask.copy()
-            return self._mask.copy()
+            raise ValueError("'curr_marker' and 'marker_mask' are required parameters")
 
         if filled_mask.shape != marker_mask.shape:
             raise ValueError("filled mask and marker mask must have the same shape")
@@ -121,7 +117,7 @@ class Segmenter:
         print('\ngetting regions to reassign')
         other_markers_mask = (filled_mask != 0) & (filled_mask != curr_marker_idx)
         nums_of_regions_to_reassign = np.unique(self._regions[marker_mask & other_markers_mask])
-        print(len(nums_of_regions_to_reassign))
+        print(f'num of regions to reassign {len(nums_of_regions_to_reassign)}')
 
         do_additional_segmentation = False if nums_of_regions_to_reassign.shape[0] == 0 else True
 
@@ -168,11 +164,10 @@ class Segmenter:
 
         if change_segmenter_mask:
             self._mask = res_mask.copy()
-        mask_rgb = self._get_rgb_mask(mask_template=res_mask)
-        self._rgb_marked_image = self._make_image(res_mask, mask_rgb, alpha=alpha)
+
         return res_mask
 
-    def new_sens(self, sens_val: float, transparensy: float) -> np.array:
+    def new_sens(self, sens_val: float) -> np.array:
         """
         перерисовывает маску с новым значением чувствительности
         :param sens_val: новое значение чувствительности
@@ -182,11 +177,73 @@ class Segmenter:
         mask, marker_mask, marker, _ = self._get_state(idx=-1)
         print(
             f"mask = {type(mask)}, marker_mask = {type(marker_mask)}, marker = {type(marker)}, pixels = {len(np.unique(_))}")
-        self._mask = self.draw_regions(
-            mask, marker_mask != 0, marker, sens_val, change_segmenter_mask=False, save_state=False, alpha=transparensy
+        self._mask = self.mark_regions(
+            mask, marker_mask != 0, marker, sens_val, change_segmenter_mask=False, save_state=False,
             # все равно вернется маска
         )
         return self._mask.copy()
+
+    def new_method(self,
+            method: Literal["slic", "watershed", "quick_shift", "fwb"],
+            save_marked_regions=True,
+            **method_params):
+
+        image_repr = None
+        if method == 'slic':
+            image_repr = self._img_repr['lab']
+        elif method == 'watershed':
+            image_repr = self._img_repr['edges']
+        else:
+            image_repr = self._img_repr['rgb']
+
+        # пронумерованы с 1
+        new_regions, _ = utils.segmentation(
+            image_repr=image_repr,
+            method=method,
+            **method_params,
+        )
+
+        marked_zone = self._mask != 0
+        old_marked_regions = np.where(marked_zone, self._regions, -1) # может быть заполнена только -1
+
+        nums = np.unique(old_marked_regions)
+        sorted_nums_in_marked_zone = nums[nums != -1]
+
+        sorted_nums_in_new_regions = np.unique(new_regions)
+
+        # пользователь ничего до этого не нарисовал
+        if sorted_nums_in_marked_zone.size == 0:
+            self._regions = new_regions
+            return self._mask.copy()
+
+        bias = sorted_nums_in_new_regions[-1]
+        old_marked_regions += bias # теперь старые номера и новые не пересекаются
+
+        new_regions[marked_zone] = old_marked_regions[marked_zone]
+
+        np.delete(sorted_nums_in_marked_zone, -1)
+
+
+
+
+
+
+
+
+
+
+
+    def load_user_marks(self, states, sens: float):
+        for _, marker_mask, curr_marker, _ in states:
+            print(curr_marker)
+            print("marker_mask numbers:", np.unique(marker_mask))
+            print("mask numbers: ", np.unique(self._mask))
+            self.draw_regions(filled_mask=self._mask,
+                              marker_mask=marker_mask != 0,
+                              curr_marker=curr_marker,
+                              sens=sens,
+                              change_segmenter_mask=True,
+                              save_state=True)
 
     def push_state(self, mask: np.array, marker_mask: np.array, curr_marker, change_mask=False):
         if change_mask:
@@ -204,20 +261,16 @@ class Segmenter:
         if len(self._states_stack) == 0:
             return None
         state = self._states_stack.pop()
-        mask = np.copy(state[0])
+        self._mask = np.copy(state[0])
         marker_mask = state[1]
         self._user_marks -= marker_mask
         self._regions = np.copy(state[-1])
-        self.draw_regions(mask, change_segmenter_mask=True, save_state=False)
-        return state
+
+        return np.copy(self._mask)
 
     @property
     def mask(self):
         return self._mask.copy()
-
-    @property
-    def rgb_marked_image(self):
-        return self._rgb_marked_image
 
     def get_states(self):
         return self._states_stack
@@ -227,7 +280,7 @@ class Segmenter:
 
     def get_user_marks(self) -> np.array:
         """
-        :return: all user marks which WERE SAVED in states stack (draw_regions(save_state=TRUE))
+        :return: all user marks which WERE SAVED in states stack (mark_regions(save_state=TRUE))
         """
         return np.copy(self._user_marks)
 
@@ -237,17 +290,12 @@ class Segmenter:
     def _get_marked_regions(self, marker_mask: npt.NDArray[np.bool]):  # Iterable[int]
         return np.unique(self._regions[marker_mask])
 
-    def _get_rgb_mask(self, mask_template: np.ndarray):
-        """
-        :param mask_template: np.ndarray of shape (M, D)
-        :return: rgb mask with shape (M, D, 3)
-        """
-        mask_rgb = np.zeros((*mask_template.shape, 3))
-        for marker_index, marker_color in self._colours_rgb.items():
-            mask_rgb[mask_template == marker_index] = marker_color
-        return mask_rgb
 
     def _make_crops(self, nums_of_superpixel: Iterable[int]) -> List[Tuple[Point, Point]]:
+        """
+        :param nums_of_superpixel: номера суперпикселей, для которых надо сделать кроп
+        :return: Возвращает координаты левого верхнего и правого нижнего угла кропа для каждого суперпикселя
+        """
         # height, width = self._regions.shape
         res = []
         for i in nums_of_superpixel:
@@ -261,12 +309,15 @@ class Segmenter:
 
     def _do_segmentation(
             self, nums_of_regions_to_reassign: Iterable[int],
-            mm: npt.NDArray[np.bool],
+            new_marker_mask: npt.NDArray[np.bool],
             filled_mask: np.ndarray):
 
         """
+        делает подразбиение пока метки пользователя не будут в разных супер пикселях
+        и зануляет подразбитые суперпиксели для закраски маркером которые на них попал
+
         :param nums_of_regions_to_reassign: пиксели для подразбиения
-        :param mm: маска со штрихами
+        :param new_marker_mask: маска со штрихами
         :param filled_mask: закрашенная маска - ИЗМЕНЯЕТСЯ методом
         :return: nothing
         """
@@ -277,78 +328,62 @@ class Segmenter:
             up_left, down_right = crop
             row_slice = slice(up_left.y, down_right.y + 1)
             column_slice = slice(up_left.x, down_right.x + 1)
+
+            #todo добавить возможность выбора метода (пока slic)
             img_crop = self._img_repr['rgb'][row_slice, column_slice]
 
-            superpixel_mask = self._regions == i
+            superpixel_mask = self._regions[row_slice, column_slice] == i
 
-            previous_marks_in_curr_pixel = np.where(superpixel_mask, self._user_marks, 0)[row_slice, column_slice]
+            previous_marks_in_curr_pixel = np.where(superpixel_mask, self._user_marks[row_slice, column_slice], 0)
             m_idx = np.unique(previous_marks_in_curr_pixel)
 
             if m_idx.shape[0] > 2:  # 0 from user_marks_mask and idx of marker
                 raise ValueError("Two markers in one superpixel")
 
-            # если нет штрихов,то пиксель закрасил метод, а не user
-            # то есть приоритет у штрихов пользователя
-            marked_by_user = True if max(m_idx) > 0 else False
+            # если нет штрихов, то пиксель закрасил метод, а не user
+            prev_marker_idx = max(m_idx)
+            marked_by_user = True if prev_marker_idx > 0 else False
 
-            filled_mask[superpixel_mask] = 0
+            if not marked_by_user:
+                ic('marked by method')
+                filled_mask[row_slice, column_slice][superpixel_mask] = 0
+                continue
+
 
             # todo придумать что делать если пересекаются два штриха разных маркеров
 
-            # нумерация с 0 или 1 неважно
-            good_segmentation = False  # True когда маркеры в разных суперпикселях
-            n_new_segments = 5
-            new_regions = None
+            new_regions = utils.additionally_split(
+                img_crop=img_crop,
+                zone_to_split=superpixel_mask,
+                old_marker_mask=previous_marks_in_curr_pixel != 0,
+                new_marker_mask=new_marker_mask[row_slice, column_slice],
+                n_segments=5,
+                numeration_start=1 + self._last_num_of_superpixels
+            )
+            # перенумерация суперпикселей по порядку с нуля
+            new_superpixel_numbers_in_old = np.unique(new_regions) # важно что отсортированный
+            new_superpixel_numbers_in_old = new_superpixel_numbers_in_old[new_superpixel_numbers_in_old != -1]
+            utils.renumerate_regions(regions=new_regions, sorted_nums_of_pixels=new_superpixel_numbers_in_old, start=0)
 
-            while not good_segmentation:
-                print('\ndo additional segmentation')
-                n_new_segments *= 2
-                new_regions = slic(img_crop, n_segments=n_new_segments, compactness=5, sigma=1, start_label=1)
-                new_regions = np.where(superpixel_mask[row_slice, column_slice], new_regions, -1)
-
-                if not marked_by_user:
-                    print('marked by method')
-                    good_segmentation = True
-                else:
-                    print('marked_by_user')
-
-                    new_pixels_under_old_marks = np.unique(np.where(
-                        previous_marks_in_curr_pixel != 0, new_regions, -1
-                    ))
-                    new_pixels_under_old_marks = new_pixels_under_old_marks[new_pixels_under_old_marks != -1]
-                    print(f"new pixels under OLD marks {new_pixels_under_old_marks}")
-
-                    mm_in_superpixel = np.where(superpixel_mask, mm, 0)
-                    new_pixels_under_new_marks = np.unique(np.where(
-                        mm_in_superpixel[row_slice, column_slice] != 0, new_regions, -1
-                    ))
-                    new_pixels_under_new_marks = new_pixels_under_new_marks[new_pixels_under_new_marks != -1]
-                    print(f"new pixels under NEW marks {new_pixels_under_new_marks}")
-
-                    if np.intersect1d(
-                            new_pixels_under_old_marks,
-                            new_pixels_under_new_marks,
-                            assume_unique=True).shape[0] == 0:
-                        good_segmentation = True
-
-            # перенумерация с нуля
-            new_superpixel_numbers_in_old = np.delete(np.unique(new_regions), -1)
-            for j, num in enumerate(new_superpixel_numbers_in_old, start=0):
-                new_regions[new_regions == num] = j
-
+            # перенумерация с минимально возможного номера, чтобы не было конфликтов с уже существующими суперпикселями
             new_regions += 1 + self._last_num_of_superpixels
 
-            self._regions[row_slice, column_slice] = np.where(
-                superpixel_mask[row_slice, column_slice], new_regions, self._regions[row_slice, column_slice])
+            ic(self._regions[row_slice, column_slice].shape)
+            self._regions[row_slice, column_slice][superpixel_mask] = new_regions[superpixel_mask]
             self._last_num_of_superpixels += new_superpixel_numbers_in_old.shape[0]
 
-            # закраска новых пикселей старыми маркерами
-            if marked_by_user:
-                new_pixels_under_old_marks = np.unique(np.where(
-                    previous_marks_in_curr_pixel != 0, self._regions[row_slice, column_slice], 0
-                ))
-                for j in new_pixels_under_old_marks:
-                    filled_mask[self._regions == j] = max(m_idx)
+            new_superpixels_under_new_marks = np.unique(np.where(
+                superpixel_mask & new_marker_mask[row_slice, column_slice],
+                new_regions,
+                -1)
+            )
+
+            new_superpixels_under_new_marks = new_superpixels_under_new_marks[new_superpixels_under_new_marks != -1]
+            print(f"new pixels under NEW marks {new_superpixels_under_new_marks}")
+
+            for num in new_superpixels_under_new_marks:
+                new_superpixel_mask = filled_mask[row_slice, column_slice] == num
+                filled_mask[row_slice, column_slice][new_superpixel_mask] = 0
         return
 
     # возвращет номера суперпикселей вокруг
@@ -375,20 +410,6 @@ class Segmenter:
 
         return list(np.unique(self._regions[y1: y2 + 1, x1: x2 + 1]))
 
-    def _make_image(self, marker_mask_2d: np.ndarray, mask_rgb: np.ndarray, alpha=0.5):
-        ic(alpha)
-
-        if alpha > 1 or alpha < 0:
-            raise ValueError
-
-        img_ar = np.where(
-            (marker_mask_2d != 0)[:, :, np.newaxis],
-            mask_rgb * (1 - alpha) + alpha * self._img_repr['rgb'],
-            self._img_repr['rgb']
-        )
-
-        img = Image.fromarray(np.clip(img_ar.astype(int), 0, 255).astype('uint8'), "RGB")
-        return img
 
     def _region_property(self, number: int) -> Dict[str, float]:
         mask = (self._regions == number)
@@ -399,14 +420,3 @@ class Segmenter:
         # variance = np.linalg.norm(variance)
         return {"mean": mean, "var": variance}
 
-    def load_user_marks(self, states, sens: float):
-        for _, marker_mask, curr_marker, _ in states:
-            print(curr_marker)
-            print("marker_mask numbers:", np.unique(marker_mask))
-            print("mask numbers: ", np.unique(self._mask))
-            self.draw_regions(filled_mask=self._mask,
-                              marker_mask=marker_mask != 0,
-                              curr_marker=curr_marker,
-                              sens=sens,
-                              change_segmenter_mask=True,
-                              save_state=True)
