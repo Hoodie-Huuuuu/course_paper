@@ -1,27 +1,33 @@
-import os
-from server import Server
+# from ..segmenter.segmenter_service import Server
+
 import tkinter as tk
 from collections import OrderedDict
 from tkinter import ttk, Frame, Button, Label
-from tkinter.filedialog import askopenfilename, asksaveasfilename
+from tkinter.filedialog import askopenfilename
 from typing import *
 
 import numpy as np
 from PIL import Image, ImageTk, ImageColor
 from icecream import ic
 import app_utils
+import config
 
-from skimage.segmentation import mark_boundaries
+import grpc
+import segmenter_service_pb2 as pb2
+import segmenter_service_pb2_grpc as pb2_grpc
+
 
 class Application(Frame):
     def __init__(self, parent):
         super().__init__(master=parent)
 
-        #todo переделать сервер
-        self.server = Server()
+        self.channel = grpc.insecure_channel(
+            f"{config.SERVER_IP}:{config.SEGMENTER_PORT}"
+        )
+        self.stub = pb2_grpc.SegmenterStub(self.channel)
 
         self.brush_size = 2
-        self.sens_val_scale = 0
+        self.sens_val_scale = float(0)
         self.transparency_val = 0.5
 
         # цвета маркеров
@@ -53,20 +59,26 @@ class Application(Frame):
 
         # список цветов в rgb
         hex2rgb = lambda hex_colour: ImageColor.getcolor(hex_colour, "RGB")
-        self._colours_rgb = {i: hex2rgb(hex_color) for i, hex_color in self.markers.values()}
+        self._colours_rgb = {
+            i: hex2rgb(hex_color) for i, hex_color in self.markers.values()
+        }
 
-        self.methods = OrderedDict({"SLIC": "slic",
-                                    "Watershed": "watershed",
-                                    "Quick shift": "quick_shift",
-                                    "Felzenszwalb": "fwb"})
-        self.params = {}  # словарь параметров для каждого метода, заполняется в интерфейсе
+        self.methods = OrderedDict(
+            {
+                "SLIC": "slic",
+                "Watershed": "watershed",
+                "Quick shift": "quick_shift",
+                "Felzenszwalb": "fwb",
+            }
+        )
+        # словарь параметров для каждого метода, заполняется в интерфейсе
+        self.params = {}
 
         self.curr_method = list(self.methods.values())[0]
 
-
         # маска последнего штришка
         self._marker_mask = None
-        
+
         # итоговая маска
         self.mask = None
 
@@ -79,8 +91,8 @@ class Application(Frame):
 
         self._curr_image = None
         self._curr_image_as_array = None
+        self.draw_borders_var = tk.BooleanVar()
 
-        self._rgb_marked_image = None
         self._photo = None
 
         self.initUI()
@@ -113,7 +125,7 @@ class Application(Frame):
             text="Save file",
             width=10,
             command=self.save_file,
-            state="disabled"
+            state="disabled",
         )
         self.bt_save.grid(row=1, column=0, sticky=tk.EW, padx=5, pady=2)
 
@@ -123,7 +135,9 @@ class Application(Frame):
         lbl_methods.pack(pady=10)
 
         cmb_methods = ttk.Combobox(
-            master=self.method_frame, values=list(self.methods.keys()), font=("Courier", 16, "bold")
+            master=self.method_frame,
+            values=list(self.methods.keys()),
+            font=("Courier", 16, "bold"),
         )
         cmb_methods.bind("<<ComboboxSelected>>", self.method_changed)
         cmb_methods.current(0)  # ///////////////////////////
@@ -162,18 +176,6 @@ class Application(Frame):
         lbl_sens = Label(master=frame_sens, text="Sensitivity:")
         lbl_sens.pack(side=tk.LEFT, padx=5, pady=2)
 
-        ###################################
-        # dv = tk.DoubleVar()
-        #
-        # def callback():
-        #     print('callback')
-        #     if self.segmenter is None:
-        #         return False
-        #     self.sens_changed(dv.get())
-        #     return True
-        #
-        # scale = tk.Entry(frame_sens, textvariable=dv, validate="focusout", validatecommand=callback)
-
         scale = tk.Scale(
             master=frame_sens,
             from_=0,
@@ -204,10 +206,21 @@ class Application(Frame):
             length=200,
             command=self.transparency_changed,
         )
-        scale_tr.set(self.transparency_val) # default value
+        scale_tr.set(self.transparency_val)  # default value
         scale_tr.pack(side=tk.LEFT, padx=5, pady=2)
 
         frame_transparency.pack(side=tk.LEFT)
+
+        # отрисовать границы для отладки
+        self.check_button = tk.Checkbutton(
+            master=self.frame_bar,
+            text="draw borders",
+            variable=self.draw_borders_var,
+            offvalue=False,
+            onvalue=True,
+            command=self.draw_borders_button_changed,
+        )
+        self.check_button.pack(side=tk.LEFT, padx=5, pady=2)
 
     # <--ВЕРХНЯЯ ПАНЕЛЬ--/>
 
@@ -240,8 +253,24 @@ class Application(Frame):
         self._marker_mask = np.zeros((image.height, image.width), dtype="uint8")
 
         # создаем сегментатор
-        # todo grpc
-        self.server.MakeSegmenter(image, self.markers, self.curr_method, **self.params)
+        self.stub.loadImage(
+            pb2.LoadImageRequest(
+                path=filepath,
+                image_array=pb2.NdArray(
+                    data=self._curr_image_as_array.tobytes(),
+                    dtype=str(self._curr_image_as_array.dtype),
+                    shape=self._curr_image_as_array.shape,
+                ),
+                markers={
+                    m_name: idx_and_color[0]
+                    for m_name, idx_and_color in self.markers.items()
+                },
+                method_params=pb2.MethodParams(
+                    method_name=self.curr_method, params=self.params
+                ),
+            )
+        )
+        # self.server.MakeSegmenter(image, self.markers, self.curr_method, **self.params)
 
         self.mask = np.zeros((image.height, image.width), dtype="uint8")
 
@@ -254,10 +283,10 @@ class Application(Frame):
         self.canv.bind("<ButtonRelease>", self.end_draw)
 
         # создаем картинку
-        self.render_image(self._curr_image)
+        self.render_image(self.get_rgb_marked_image())
 
         # делаем доступной кнопку сохранить
-        self.bt_save['state'] = "normal"
+        self.bt_save["state"] = "normal"
         return
 
     # рисование (полотно появляется после загрузки картинки)
@@ -270,66 +299,101 @@ class Application(Frame):
             fill=self._color,
             outline=self._color,
         )
-        #todo заполнять все пиксели под маркером
-        #заполняем маску значением - индекс маркера
+        # todo заполнять все пиксели под маркером
+        # заполняем маску значением - индекс маркера
         self._marker_mask[event.y, event.x] = self.markers[self.curr_marker][0]
         return
 
     # функция отправки маски в сегментатор
     def end_draw(self, event):
-        #todo grpc
-        self.mask = self.server.GetMask(self._marker_mask, self.curr_marker, self.sens_val_scale)
+        height, width = self._marker_mask.shape
+        mask2D = pb2.Mask2D(
+            data=self._marker_mask.tobytes(),
+            dtype=str(self._marker_mask.dtype),
+            height=height,
+            width=width,
+        )
+
+        self.stub.sendMarkerMask(
+            pb2.MarkerMask(
+                mask=mask2D,
+                marker=self.curr_marker,
+                sens=pb2.SensitivityValue(value=np.float32(0)),
+            )
+        )
+
+        self.mask = app_utils.Mask2D_to_array(
+            self.stub.getMarkedMask2D(pb2.google_dot_protobuf_dot_empty__pb2.Empty())
+        )
 
         # обновить отправляемую маску
         self._marker_mask = np.zeros(self.mask.shape, dtype=self.mask.dtype)
 
-        # создать изображение с маской
-        self._rgb_marked_image = app_utils.get_image(
-            self.mask, source_image=self._curr_image_as_array, colors_rgb=self._colours_rgb, alpha=self.transparency_val)
-
         # меняем картинку с добавленными изменениями от штришка
-        self.render_image(self._rgb_marked_image)
+        self.render_image(self.get_rgb_marked_image())
 
     def render_image(self, image):
         self._photo = ImageTk.PhotoImage(image)
         self.canv.create_image(0, 0, anchor="nw", image=self._photo)
         return
 
+    def get_rgb_marked_image(self):
+        regions = None
+        if self.draw_borders_var.get():
+            regions = app_utils.Mask2D_to_array(
+                self.stub.getRegions(pb2.google_dot_protobuf_dot_empty__pb2.Empty())
+            )
+
+        # создать изображение с маской
+        return app_utils.get_image(
+            mask=self.mask,
+            source_image=self._curr_image_as_array,
+            colors_rgb=self._colours_rgb,
+            alpha=self.transparency_val,
+            draw_borders=self.draw_borders_var.get(),
+            regions=regions,
+        )
+
     def transparency_changed(self, val):
         self.transparency_val = float(val)
         if self._curr_image is None:
             return
-        self._rgb_marked_image = app_utils.get_image(
-            self.mask, source_image=self._curr_image_as_array, colors_rgb=self._colours_rgb, alpha=self.transparency_val)
-        self.render_image(self._rgb_marked_image)
+
+        self.render_image(self.get_rgb_marked_image())
 
     # установка значения ползунка чувствительности [ ]
     def sens_changed(self, val):
-        self.sens_val_scale = float(val)
-        if self.server.StatesLen() == 0: # ничего не нарисовано
+        nothing_is_drawn = not np.any(self.mask)
+        if nothing_is_drawn:
             return
 
-        # todo grpc
-        # тут нужна будет асинхронность
-        self.mask = self.server.NewSens(self.sens_val_scale)
+        self.sens_val_scale = float(val)
 
-        self._rgb_marked_image = app_utils.get_image(
-            self.mask, source_image=self._curr_image_as_array, colors_rgb=self._colours_rgb, alpha=self.transparency_val)
-        self.render_image(self._rgb_marked_image)
+        self.stub.sendNewSens(pb2.SensitivityValue(value=self.sens_val_scale))
+        self.mask = app_utils.Mask2D_to_array(
+            self.stub.getMarkedMask2D(pb2.google_dot_protobuf_dot_empty__pb2.Empty())
+        )
+        self.render_image(self.get_rgb_marked_image())
         return
 
     def ctrl_z(self, event):
-        print('ctrl+z')
-        # todo grpc
-        if self.server.StatesLen() == 0: # ничего не нарисовано
+        print("ctrl+z")
+        nothing_is_drawn = not np.any(self.mask)
+        if nothing_is_drawn:
             return
 
-        old_mask = self.server.PopState()
+        old_mask = app_utils.Mask2D_to_array(
+            self.stub.popState(pb2.google_dot_protobuf_dot_empty__pb2.Empty())
+        )
         self.mask = old_mask
 
-        self._rgb_marked_image = app_utils.get_image(
-            self.mask, source_image=self._curr_image_as_array, colors_rgb=self._colours_rgb, alpha=self.transparency_val)
-        self.render_image(self._rgb_marked_image)
+        self.render_image(self.get_rgb_marked_image())
+
+    def draw_borders_button_changed(self):
+        if self._curr_image is None:
+            return
+        # меняем картинку с добавленными изменениями от штришка
+        self.render_image(self.get_rgb_marked_image())
 
     # выбор маркера
     def marker_changed(self, event):
@@ -347,18 +411,25 @@ class Application(Frame):
         print("start segmentation for " + self.curr_method)
 
         # создаем сегментатор
-        # todo grpc
-        # todo ЗАЙДИ ТОЛЬКО В ЭТОТ МЕТОД
-        #self.mask = self.server.NewMethod()
+        self.stub.newMethod(
+            pb2.NewMethodRequest(
+                method_params=pb2.MethodParams(
+                    method_name=self.curr_method, params=self.params
+                ),
+                save_current_mask=True,
+            )
+        )
+        self.mask = app_utils.Mask2D_to_array(
+            self.stub.getMarkedMask2D(pb2.google_dot_protobuf_dot_empty__pb2.Empty())
+        )
 
         # создаем картинку
-        self._rgb_marked_image = app_utils.get_image(
-            self.mask, source_image=self._curr_image_as_array, colors_rgb=self._colours_rgb, alpha=self.transparency_val)
-        self.render_image(self._rgb_marked_image)
+        self.render_image(self.get_rgb_marked_image())
         return
 
-    # todo переделать метод по красивее
-    def set_params_widget(self, method: Literal["slic", "watershed", "quick_shift", "fwb"], parent_widget):
+    def set_params_widget(
+        self, method: Literal["slic", "watershed", "quick_shift", "fwb"], parent_widget
+    ):
         """
         :param method:
         :param parent_widget:
@@ -371,15 +442,19 @@ class Application(Frame):
         if self.button_segment is not None:
             self.button_segment.destroy()
 
-        self.method_params_widget = Frame(master=parent_widget, relief=tk.RAISED, borderwidth=1)
+        self.method_params_widget = Frame(
+            master=parent_widget, relief=tk.RAISED, borderwidth=1
+        )
 
         if method == "slic" or method == "watershed":
             # num of superpixels
-            lbl_n_segments = Label(master=self.method_params_widget, text="num of superpixels")
+            lbl_n_segments = Label(
+                master=self.method_params_widget, text="num of superpixels"
+            )
             lbl_n_segments.pack(padx=5, pady=10)
 
             def n_segments_handler(val):
-                self.params['n_segments'] = int(val)
+                self.params["n_segments"] = int(val)
 
             scale = tk.Scale(
                 master=self.method_params_widget,
@@ -393,13 +468,15 @@ class Application(Frame):
             )
             scale.pack(padx=5, pady=2)
 
-            if method == 'slic':
+            if method == "slic":
                 # compactness
-                lbl_n_segments = Label(master=self.method_params_widget, text="compactness")
+                lbl_n_segments = Label(
+                    master=self.method_params_widget, text="compactness"
+                )
                 lbl_n_segments.pack(padx=5, pady=10)
 
                 def compactness_handler(val):
-                    self.params['compactness'] = int(val)
+                    self.params["compactness"] = int(val)
 
                 scale_c = tk.Scale(
                     master=self.method_params_widget,
@@ -413,14 +490,18 @@ class Application(Frame):
                 )
                 scale_c.pack(padx=5, pady=2)
 
-                self.params = {'n_segments': 700,
-                               'compactness': 5,
-                               'sigma': 0,
-                               'start_label': 1}
+                self.params = {
+                    "n_segments": 700,
+                    "compactness": 5,
+                    "sigma": 0,
+                    "start_label": 1,
+                }
 
-            elif method == 'watershed':
+            elif method == "watershed":
                 # compactness
-                lbl_n_segments = Label(master=self.method_params_widget, text="compactness")
+                lbl_n_segments = Label(
+                    master=self.method_params_widget, text="compactness"
+                )
                 lbl_n_segments.pack(padx=5, pady=10)
 
                 start = 0
@@ -428,7 +509,9 @@ class Application(Frame):
                 max_compactness = 0.005
 
                 def compactness_handler(val):
-                    self.params['compactness'] = max_compactness * (float(val) - start) / (end - start)
+                    self.params["compactness"] = (
+                        max_compactness * (float(val) - start) / (end - start)
+                    )
 
                 scale_c = tk.Scale(
                     master=self.method_params_widget,
@@ -442,17 +525,18 @@ class Application(Frame):
                 )
                 scale_c.pack(padx=5, pady=2)
 
-                self.params = {'n_segments': 700,
-                               'compactness': 0.001,
-                               }
+                self.params = {
+                    "n_segments": 700,
+                    "compactness": 0.001,
+                }
 
-        elif method == 'fwb':
+        elif method == "fwb":
             # scale
             lbl_n_scale = Label(master=self.method_params_widget, text="scale")
             lbl_n_scale.pack(padx=5, pady=10)
 
             def scale_handler(val):
-                self.params['scale'] = int(val)
+                self.params["scale"] = int(val)
 
             scale = tk.Scale(
                 master=self.method_params_widget,
@@ -466,16 +550,14 @@ class Application(Frame):
             )
             scale.pack(padx=5, pady=2)
 
-            self.params = {
-                'scale': 400,
-                'sigma': 1,
-                'min_size': 50
-            }
+            self.params = {"scale": 400, "sigma": 1, "min_size": 50}
 
-        elif method == 'quick_shift':
+        elif method == "quick_shift":
 
             # compactness
-            lbl_compactness = Label(master=self.method_params_widget, text="compactness")
+            lbl_compactness = Label(
+                master=self.method_params_widget, text="compactness"
+            )
             lbl_compactness.pack(padx=5, pady=10)
 
             start = 0
@@ -483,7 +565,9 @@ class Application(Frame):
             max_compactness = 1
 
             def compactness_handler(val):
-                self.params['ratio'] = max_compactness * (float(val) - start) / (end - start)
+                self.params["ratio"] = (
+                    max_compactness * (float(val) - start) / (end - start)
+                )
 
             scale_c = tk.Scale(
                 master=self.method_params_widget,
@@ -497,11 +581,7 @@ class Application(Frame):
             )
             scale_c.pack(padx=5, pady=2)
 
-            self.params = {
-                'sigma': 1,
-                'max_dist': 1000,
-                'ratio': 0.5
-            }
+            self.params = {"sigma": 1, "max_dist": 1000, "ratio": 0.5}
 
         self.method_params_widget.pack()
 

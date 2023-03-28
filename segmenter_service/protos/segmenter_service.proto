@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+message Mask2D {
+    bytes data = 1;
+    string dtype = 2;
+    int32 width = 3;
+    int32 height = 4;
+}
+
+message NdArray {
+    bytes data = 1;
+    string dtype = 2;
+    repeated int32 shape = 3;
+}
+
+message SensitivityValue {
+    float value = 1;
+}
+
+message MarkerMask {
+    Mask2D mask = 1;
+    string marker = 2;
+    SensitivityValue sens = 3;
+}
+
+message MethodParams {
+    string method_name = 1;
+    map<string, double> params = 2;
+}
+
+message NewMethodRequest {
+    MethodParams method_params = 1;
+    bool save_current_mask = 2;
+}
+
+message LoadImageRequest {
+    string path = 1; // id of image on server
+    NdArray image_array = 2;
+    map<string, int32> markers = 3; // markers numeration
+    MethodParams method_params = 4;
+}
+
+
+
+service Segmenter {
+    rpc loadImage(LoadImageRequest) returns (google.protobuf.Empty) {}
+    rpc newMethod(NewMethodRequest) returns (google.protobuf.Empty) {}
+    rpc sendNewSens(SensitivityValue) returns (google.protobuf.Empty) {}
+    rpc sendMarkerMask(MarkerMask) returns (google.protobuf.Empty) {}
+    rpc getMarkedMask2D(google.protobuf.Empty) returns (Mask2D) {}
+    rpc getRegions(google.protobuf.Empty) returns (Mask2D) {}
+    rpc popState(google.protobuf.Empty) returns (Mask2D) {}
+}

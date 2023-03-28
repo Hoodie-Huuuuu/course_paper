@@ -1,34 +1,59 @@
-Интерфейс приложения реализован при помощи библиотеки tkinter в файле app.py
+### [Интерфейс приложения](./app_segmentation)
 
-# app.py
+### [Сервер](./segmenter_service)
 
-Интерфейс приложения
 
-## Запустить приложение через python
+## Запустить приложение с помощью python
+После клонирования все команды выполняются из корневой директории проекта
 
-```shell
-python3 app.py
-```
+1. Склонировать репозиторий 
+    ```shell
+    git clone https://github.com/Hoodie-Huuuuu/course_paper.git
+    ```
+3. Создать venv и активировать его
+    ```shell
+    python3 -m venv venv
+    source ./venv/bin/activate
+    ```
 
-1) внутри класс Application, который отрисовывает интерфейс при создании экземпляра
+4. Скачать зависимости
+    ```shell
+    pip3 install -r requirements.txt
+    ```
+
+5. В отдельном терминале запустить сервер
    
-2) у класса есть метод open_file, который загружает в сегментатор картинку, а Application ее отрисовывает
+   (Вместо 5005 можно указать любой свободный порт, но тогда в файле [config.py](app_segmentation/config.py) нужно поменять переменную SEGMENTER_PORT = "ваш_порт"
+    ```shell
+    python3 ./segmenter_service/segmenter_service.py -p 5005
+    ```
+
+6. Запустить клиент
    
-3) после разметки используется метод save_file класса Application, который открывает диалоговое окно; после 
-выбора пути для сохранения, будет загружен файл .npz
+   ```shell
+   python3 ./app_segmentation/app.py
+   ```
 
-4) для доступа к размеченной маске:
-```python
-npzfile = np.load(outpath + '.npz')
-npzfile['mask']
-```
+7. Tkinter по умолчанию установлен в python3, но на всякий можно написать так
+   ```shell
+   pip3 install tk
+   ```
 
-5) для доступа к штрихам пользователя
-```python
-npzfile['user_marks']
-```
 
-***пока функционал импорта маски и штрихов недоработан***
+
+ ## Для запуска сервера в docker
+1.  ```shell
+    docker compose build
+    ```
+2. ```shell
+   docker compose up
+   ```
+3. Для запуска клиента нужно проделать шаги 2,3 и 5 вот [тут](#запустить-приложение-с-помощью-python)
+
+
+
+
+
 
 
 ## Упаковка приложения

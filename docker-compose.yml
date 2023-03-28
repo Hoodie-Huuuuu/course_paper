@@ -1,0 +1,13 @@
+version: "3.8"
+name: segmenter_service
+
+services:
+
+  segmenter_service:
+    build: ./segmenter_service
+    image: segmenter_service
+    environment:
+      - SEGMENTER_PORT=${SEGMENTER_PORT}
+    command: python3 segmenter_service.py -p ${SEGMENTER_PORT}
+    ports:
+      - ${SEGMENTER_PORT}:${SEGMENTER_PORT}
