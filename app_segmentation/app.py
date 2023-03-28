@@ -86,9 +86,6 @@ class Application(Frame):
         self.method_params_widget = None
         self.button_segment = None
 
-        # сегментатор изображения
-        self.segmenter = None
-
         self._curr_image = None
         self._curr_image_as_array = None
         self.draw_borders_var = tk.BooleanVar()
@@ -226,15 +223,14 @@ class Application(Frame):
 
     def save_file(self):
         ic("кнопка нажимается")
-        # if self.segmenter is None:
-        #     return
-        # # диалог
-        # outpath = asksaveasfilename()
-        # if outpath is None:  # asksaveasfile return `None` if dialog closed with "cancel".
-        #     return
-        #
-        # user_marks = self.segmenter.get_user_marks()
-        # np.savez(outpath, mask=self.mask, user_marks=user_marks)
+        if self._curr_image is None:
+            return
+        # диалог
+        outpath = asksaveasfilename()
+        if outpath is None:  # asksaveasfile return `None` if dialog closed with "cancel".
+            return
+        
+        np.savez(outpath, mask=self.mask)
         return
 
     # Открываем файл для редактирования
