@@ -144,9 +144,7 @@ class Segmenter:
         for region_num in marked_regions_nums:
             #  окно просморта -> номера суперпикселей, попавших в окно
             radius = int(self._thresholds["radius"] * sens)
-            # print(f"radius = {radius}")
             superpixels_around = self._superpixels_around(region_num, radius)
-            # print(f"sps araound = {superpixels_around}")
             properties = self._region_property(region_num)
 
             # не затирать уже отмеченные
@@ -230,7 +228,6 @@ class Segmenter:
 
         nums = np.unique(old_marked_regions)
         sorted_nums_in_marked_zone = nums[nums != -1]
-        # print(f"num of marked regions in old method is {sorted_nums_in_marked_zone.size} and max num is {np.max(sorted_nums_in_marked_zone)}")
 
         sorted_nums_in_new_regions = np.unique(new_regions)
 
@@ -242,7 +239,6 @@ class Segmenter:
             return  # self._mask.copy()
 
         bias = sorted_nums_in_new_regions[-1]
-        # print(f"bias == {bias}")
         old_marked_regions += bias  # теперь старые номера и новые не пересекаются
         sorted_nums_in_marked_zone += bias
         new_regions[marked_zone] = old_marked_regions[marked_zone]
@@ -253,9 +249,6 @@ class Segmenter:
         self._last_num_of_superpixels = utils.renumerate_regions(
             regions=new_regions, sorted_nums_of_pixels=numbers, start=1
         )
-
-        # keks = np.unique(self._regions)
-        # print(f'OLD N OF REGIONS {keks.size} and max is {keks[-1]}')
 
         self._regions = new_regions
 

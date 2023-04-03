@@ -1,7 +1,6 @@
 import argparse
 import sys
 from concurrent import futures
-from icecream import ic
 
 import grpc
 import numpy as np
@@ -62,22 +61,6 @@ class SegmenterService(pb2_grpc.SegmenterServicer):
             print(e)
 
         return pb2.google_dot_protobuf_dot_empty__pb2.Empty()
-
-    # def MakeSegmenter(self, image: Image, markers: Dict[str, Tuple(int, str)],
-    #              method: Literal["slic", "watershed", "quick_shift", "fwb"],
-    #              **method_params):
-    #     self.segmenter = Segmenter(image, markers, method, **method_params)
-
-    # def GetMask(self, marker_mask: npt.NDArray, curr_marker: str = "None", sens: float = 0) -> np.ndarray:
-    #     new_mask = self.segmenter.mark_regions(
-    #         self.segmenter.mask,
-    #         marker_mask != 0,  # must be bool
-    #         curr_marker,
-    #         sens,
-    #         change_segmenter_mask=True,
-    #         save_state=True
-    #     )
-    #     return new_mask
 
     def sendNewSens(self, request: pb2.SensitivityValue, context):
         self.segmenter.new_sens(sens_val=request.value)

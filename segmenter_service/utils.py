@@ -63,10 +63,10 @@ def segmentation(
 
     elif method == "fwb":  # 0
         regions = felzenszwalb(
-            image_repr["lab"],
-            scale=method_params["scale"],
+            image_repr["rgb"],
+            scale=int(method_params["scale"]),
             sigma=method_params["sigma"],
-            min_size=method_params["min_size"],
+            min_size=int(method_params["min_size"]),
         )  # scale = 400 #min_size = 50
 
     renumerate_from_1(regions)
@@ -118,8 +118,6 @@ def additionally_split(
     # нумерация с 0 или 1 неважно
     good_segmentation = False  # True когда маркеры в разных суперпикселях
     new_regions = None
-
-    print("marked_by_user")
 
     while not good_segmentation:
         print("\ndo additional segmentation")
@@ -189,7 +187,6 @@ def array_from_Mask2D(mask2d):
     data = mask2d.data
     dtype = mask2d.dtype
 
-    print("kek")
     return np.frombuffer(data, dtype=dtype).reshape((height, width))
 
 

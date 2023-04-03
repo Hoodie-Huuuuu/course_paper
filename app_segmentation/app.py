@@ -67,7 +67,7 @@ class Application(Frame):
             {
                 "SLIC": "slic",
                 "Watershed": "watershed",
-                "Quick shift": "quick_shift",
+                # "Quick shift": "quick_shift",
                 "Felzenszwalb": "fwb",
             }
         )
@@ -400,6 +400,7 @@ class Application(Frame):
     def method_changed(self, event):
         print("method selected")
         self.curr_method = self.methods[event.widget.get()]
+        print(self.curr_method)
         self.set_params_widget(self.curr_method, self.method_frame)  # c кнопкой
 
     # todo ДОБАВИТЬ ФИКСАЦИЮ в СЕГМЕНТАТОР
