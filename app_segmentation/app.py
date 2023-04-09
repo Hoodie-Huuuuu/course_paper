@@ -172,6 +172,18 @@ class Application(Frame):
 
         lbl_sens = Label(master=frame_sens, text="Sensitivity:")
         lbl_sens.pack(side=tk.LEFT, padx=5, pady=2)
+        
+        def slider_sens_changed(val):
+            if not slider_sens_changed.called:
+                print(val)
+                slider_sens_changed.called = True
+                self.sens_changed(val)
+                frame_sens.after(200, reset_slider_changed)
+        
+        def reset_slider_changed():
+            slider_sens_changed.called = False
+
+        slider_sens_changed.called = False
 
         scale = tk.Scale(
             master=frame_sens,
@@ -181,7 +193,7 @@ class Application(Frame):
             sliderlength=25,
             orient="horizontal",
             length=200,
-            command=self.sens_changed,
+            command=slider_sens_changed,
         )
         scale.pack(side=tk.LEFT, padx=5, pady=2)
 
@@ -314,7 +326,7 @@ class Application(Frame):
             pb2.MarkerMask(
                 mask=mask2D,
                 marker=self.curr_marker,
-                sens=pb2.SensitivityValue(value=np.float32(0)),
+                sens=pb2.SensitivityValue(value=self.sens_val_scale),
             )
         )
 
@@ -593,6 +605,8 @@ class Application(Frame):
 
 def main():
     root = tk.Tk()
+    style = ttk.Style()
+    style.theme_use('default')
     root.title("marking of minerals")
     root.attributes("-fullscreen", True)
     root.geometry("300x300")

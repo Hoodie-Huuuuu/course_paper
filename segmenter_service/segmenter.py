@@ -168,7 +168,7 @@ class Segmenter:
                         self._regions == superpixel_num
                     ] = curr_marker_idx  # отметили суперпиксель
                     # mask_rgb[self._regions == superpixel_num, ...] = self._colours_rgb[curr_marker_idx]
-
+            
             res_mask[
                 self._regions == region_num
             ] = curr_marker_idx  # отметили суперпиксель
@@ -335,7 +335,7 @@ class Segmenter:
 
             ymin, ymax = np.min(row_indexes), np.max(row_indexes)
             xmin, xmax = np.min(column_indexes), np.max(column_indexes)
-
+            
             res.append((Point(x=xmin, y=ymin), Point(x=xmax, y=ymax)))
         return res
 
@@ -398,6 +398,7 @@ class Segmenter:
 
             keks = np.unique(self._regions)
             print(f"OLD N OF REGIONS {keks.size} and max is {keks[-1]}")
+            ic(n_new_superpixels)
 
             self._regions[row_slice, column_slice][superpixel_mask] = new_regions[
                 superpixel_mask
