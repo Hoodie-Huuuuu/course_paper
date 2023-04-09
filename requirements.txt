@@ -6,3 +6,4 @@ numpy==1.21.5
 Pillow==9.4.0
 protobuf==4.22.1
 scikit_image==0.19.2
+binarytree==6.5.1

@@ -3,6 +3,7 @@ from typing import *
 from icecream import ic
 import numpy as np
 from skimage.segmentation import watershed, slic, felzenszwalb, quickshift
+import bisect 
 
 import numpy.typing as npt
 
@@ -192,3 +193,8 @@ def array_from_Mask2D(mask2d):
 
 def array_from_NdArray(arr):
     return np.frombuffer(arr.data, dtype=arr.dtype).reshape(arr.shape)
+
+
+def in_sorted_list(elem, sorted_list):
+    i = bisect.bisect_left(sorted_list, elem)
+    return i != len(sorted_list) and sorted_list[i] == elem

@@ -7,12 +7,13 @@ from PIL import Image
 from icecream import ic
 from skimage import filters
 from skimage.color import rgb2lab
+import bisect
 
 
 import utils
 
 
-# todo исключения если рисовать у края картинки
+# TODO иногда возникают исключения если рисовать у края картинки (косяк с канвасом, а не сегментатором)
 
 
 @dataclass
@@ -50,7 +51,7 @@ class Segmenter:
         # выходная маска сегментатора и все штрихи пользователя (будет отправлятся как массив байт сервером)
         self._mask = np.zeros((image.height, image.width), dtype="uint8")
 
-        # todo отправлять как 1 json file сервером
+        # TODO отправлять как 1 json file сервером
         self._user_marks = np.zeros((image.height, image.width), dtype="uint8")
 
         gray = np.asarray(image.convert("L"))
@@ -138,9 +139,10 @@ class Segmenter:
             self._do_segmentation(nums_of_regions_to_reassign, marker_mask, res_mask)
             marked_regions_nums = self._get_marked_regions(marker_mask)
 
-        # todo переделать сканировние окрестности и не перекрашивать закрашенные пиксели
+        # TODO переделать сканировние окрестности и не перекрашивать закрашенные пиксели
         # print('\nprocessing area')
         processed_area = []
+        
         for region_num in marked_regions_nums:
             #  окно просморта -> номера суперпикселей, попавших в окно
             radius = int(self._thresholds["radius"] * sens)
@@ -149,7 +151,7 @@ class Segmenter:
 
             # не затирать уже отмеченные
             for superpixel_num in superpixels_around:
-                if superpixel_num in processed_area:
+                if utils.in_sorted_list(superpixel_num,processed_area):
                     break
                 properties_superpixel = self._region_property(superpixel_num)
 
@@ -163,7 +165,7 @@ class Segmenter:
                         break
 
                 if all_prop_good:
-                    processed_area += superpixel_num
+                    bisect.insort(processed_area,superpixel_num)
                     res_mask[
                         self._regions == superpixel_num
                     ] = curr_marker_idx  # отметили суперпиксель
@@ -236,7 +238,7 @@ class Segmenter:
             ic("nothing drawn")
             self._regions = new_regions
             self._last_num_of_superpixels = sorted_nums_in_new_regions[-1]
-            return  # self._mask.copy()
+            return 
 
         bias = sorted_nums_in_new_regions[-1]
         old_marked_regions += bias  # теперь старые номера и новые не пересекаются
@@ -252,7 +254,7 @@ class Segmenter:
 
         self._regions = new_regions
 
-        return  # self._mask.copy()
+        return
 
     def load_user_marks(self, states, sens: float):
         for _, marker_mask, curr_marker, _ in states:
@@ -328,7 +330,7 @@ class Segmenter:
         :param nums_of_superpixel: номера суперпикселей, для которых надо сделать кроп
         :return: Возвращает координаты левого верхнего и правого нижнего угла кропа для каждого суперпикселя
         """
-        # height, width = self._regions.shape
+        height, width = self._regions.shape
         res = []
         for i in nums_of_superpixel:
             row_indexes, column_indexes = np.where(self._regions == i)
@@ -336,6 +338,15 @@ class Segmenter:
             ymin, ymax = np.min(row_indexes), np.max(row_indexes)
             xmin, xmax = np.min(column_indexes), np.max(column_indexes)
             
+            if ymin > 0:
+                ymin -= 1
+            if xmin > 0:
+                xmin -= 1
+            if ymax < height - 1:
+                ymax += 1
+            if xmax < width - 1:
+                xmax += 1
+                
             res.append((Point(x=xmin, y=ymin), Point(x=xmax, y=ymax)))
         return res
 
@@ -363,7 +374,7 @@ class Segmenter:
             row_slice = slice(up_left.y, down_right.y + 1)
             column_slice = slice(up_left.x, down_right.x + 1)
 
-            # todo добавить возможность выбора метода (пока slic)
+            # TODO добавить возможность выбора метода (пока slic)
             img_crop = self._img_repr["rgb"][row_slice, column_slice]
 
             superpixel_mask = self._regions[row_slice, column_slice] == i
@@ -385,7 +396,7 @@ class Segmenter:
                 filled_mask[row_slice, column_slice][superpixel_mask] = 0
                 continue
 
-            # todo придумать что делать если пересекаются два штриха разных маркеров
+            # TODO придумать что делать если пересекаются два штриха разных маркеров
 
             new_regions, n_new_superpixels = utils.additionally_split(
                 img_crop=img_crop,
