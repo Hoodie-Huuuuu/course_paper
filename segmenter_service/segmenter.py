@@ -39,10 +39,13 @@ class Segmenter:
         """
 
         # пароги для чувствительности
-        self._thresholds = {"mean": 50, "var": 50, "radius": 100}  # в пикселях
+        self._thresholds = {"mean": 30, "var": 30, "radius": 100}  # в пикселях
         # маркеры
         self._markers = markers
         ic(markers)
+        
+        self.image_height, self.image_width = image.height, image.width
+        
 
         # стек состояний маски
         # на любом шаге лежит (предыдущая маска, новые штрихи на этой маске, номер маркера, деление на суперпиксели)
@@ -65,12 +68,6 @@ class Segmenter:
         self._regions, self._last_num_of_superpixels = utils.segmentation(
             image_repr=self._img_repr, method=method, **method_params,
         )
-
-        # для отрисовки  границ
-        # Image.fromarray(np.uint8(self._edges * 255), 'L')
-
-        # self._rgb_marked_image = Image.fromarray(
-        #     np.uint8(mark_boundaries(self._img_repr['rgb'], self._regions) * 255))
 
         print(
             f"numeration starts {np.min(np.unique(self._regions))} and ends {np.max(np.unique(self._regions))}"
@@ -108,6 +105,8 @@ class Segmenter:
         """
         if filled_mask is None:
             filled_mask = self.mask
+            
+        ic(sens)
 
         if curr_marker == "None" or marker_mask is None:
             raise ValueError("'curr_marker' and 'marker_mask' are required parameters")
@@ -141,40 +140,78 @@ class Segmenter:
 
         # TODO переделать сканировние окрестности и не перекрашивать закрашенные пиксели
         # print('\nprocessing area')
-        processed_area = []
         
-        for region_num in marked_regions_nums:
-            #  окно просморта -> номера суперпикселей, попавших в окно
-            radius = int(self._thresholds["radius"] * sens)
-            superpixels_around = self._superpixels_around(region_num, radius)
-            properties = self._region_property(region_num)
-
-            # не затирать уже отмеченные
-            for superpixel_num in superpixels_around:
-                if utils.in_sorted_list(superpixel_num,processed_area):
-                    break
-                properties_superpixel = self._region_property(superpixel_num)
-
-                all_prop_good = True
-                for prop_name, prop_val in properties_superpixel.items():
-                    if (
-                        np.linalg.norm(properties[prop_name] - prop_val)
-                        > self._thresholds[prop_name] * sens
-                    ):
-                        all_prop_good = False
-                        break
-
-                if all_prop_good:
-                    bisect.insort(processed_area,superpixel_num)
-                    res_mask[
-                        self._regions == superpixel_num
-                    ] = curr_marker_idx  # отметили суперпиксель
-                    # mask_rgb[self._regions == superpixel_num, ...] = self._colours_rgb[curr_marker_idx]
+        processed_area = [] # номера обработанных
+        
+        reference_regions = list(marked_regions_nums) # sorted
+        reference_props = [None for i in reference_regions] # same size
+        
+        if sens > 0:
+            # считаем свойства для пикселей
+            print("count props")
+            reference_props = [
+                self._region_property(num)
+                for num in reference_regions
+            ]
+        
+        while len(reference_regions) > 0:
+            print("while iteration")
+            next_reference_regions = [] # пиксели для обработки на след цикле
+            next_reference_props = []
             
-            res_mask[
-                self._regions == region_num
-            ] = curr_marker_idx  # отметили суперпиксель
-
+            print("i go through refereence pixels")
+            for i in range(len(reference_regions)):
+                num_reference_region, reference_prop = reference_regions[i], reference_props[i]
+                
+                ic(reference_regions)
+                bisect.insort(processed_area, num_reference_region)
+                ic(processed_area)
+                
+                res_mask[
+                        self._regions == num_reference_region
+                ] = curr_marker_idx
+                
+                if not sens > 0:
+                    print("dont do scan sens = 0")
+                    continue
+                
+                print("do scan")
+                    
+                empty_superpixels_around = self._empty_superpixels_around(num_reference_region)
+                ic(empty_superpixels_around)
+                
+                for superpixel_num in empty_superpixels_around:
+                    print("count props for")
+                    ic(superpixel_num)
+                    
+                    # если уже обработан то продолжить
+                    if utils.in_sorted_list(superpixel_num, processed_area):
+                        print(f"{superpixel_num} has been already processed")
+                        continue
+                    
+                    if utils.in_sorted_list(superpixel_num, next_reference_regions):
+                        print(f"{superpixel_num} already in regions to process")
+                        continue
+                    
+                    # сравниваем соседние суперпиксели по свойствам
+                    props = self._region_property(superpixel_num)
+                    if utils.properties_equal(props, reference_prop, self._thresholds, sens):
+                        print(f"{superpixel_num} хороший")
+                        idx = bisect.bisect_left(next_reference_regions, superpixel_num)
+                        next_reference_regions.insert(idx, superpixel_num)
+                        next_reference_props.insert(idx, props)
+                    
+                    else:
+                        print(f"{superpixel_num} плохой")
+                        bisect.insort(processed_area, superpixel_num)
+                print("\n\n\nend of scan")
+                ic(reference_regions)
+                ic(next_reference_regions)
+                
+            reference_regions = next_reference_regions
+            reference_props = next_reference_props
+        print("\n\nout of while")     
+                    
         if save_state:
             # marker mask with current marker index instead bool
             m = np.where(marker_mask, curr_marker_idx, 0)
@@ -222,14 +259,14 @@ class Segmenter:
         new_regions, _ = utils.segmentation(
             image_repr=self._img_repr, method=method, **method_params,
         )
-
+        
         marked_zone = self._mask != 0
         old_marked_regions = np.where(
             marked_zone, self._regions, -1
         )  # может быть заполнена только числом -1
 
         nums = np.unique(old_marked_regions)
-        sorted_nums_in_marked_zone = nums[nums != -1]
+        sorted_nums_in_marked_zone = nums[1:]
 
         sorted_nums_in_new_regions = np.unique(new_regions)
 
@@ -256,19 +293,19 @@ class Segmenter:
 
         return
 
-    def load_user_marks(self, states, sens: float):
-        for _, marker_mask, curr_marker, _ in states:
-            print(curr_marker)
-            print("marker_mask numbers:", np.unique(marker_mask))
-            print("mask numbers: ", np.unique(self._mask))
-            self.draw_regions(
-                filled_mask=self._mask,
-                marker_mask=marker_mask != 0,
-                curr_marker=curr_marker,
-                sens=sens,
-                change_segmenter_mask=True,
-                save_state=True,
-            )
+    # def load_user_marks(self, states, sens: float):
+    #     for _, marker_mask, curr_marker, _ in states:
+    #         print(curr_marker)
+    #         print("marker_mask numbers:", np.unique(marker_mask))
+    #         print("mask numbers: ", np.unique(self._mask))
+    #         self.draw_regions(
+    #             filled_mask=self._mask,
+    #             marker_mask=marker_mask != 0,
+    #             curr_marker=curr_marker,
+    #             sens=sens,
+    #             change_segmenter_mask=True,
+    #             save_state=True,
+    #         )
 
     def push_state(
         self, mask: np.array, marker_mask: np.array, curr_marker, change_mask=False
@@ -325,10 +362,12 @@ class Segmenter:
 
     def _make_crops(
         self, nums_of_superpixel: Iterable[int]
-    ) -> List[Tuple[Point, Point]]:
+    ) -> List[Tuple[Tuple[Point, Point], int]]:
         """
         :param nums_of_superpixel: номера суперпикселей, для которых надо сделать кроп
-        :return: Возвращает координаты левого верхнего и правого нижнего угла кропа для каждого суперпикселя
+        :return: Возвращает координаты левого верхнего и правого нижнего угла
+                 кропа для каждого суперпикселя c его номером - (crop , idx)
+
         """
         height, width = self._regions.shape
         res = []
@@ -347,7 +386,7 @@ class Segmenter:
             if xmax < width - 1:
                 xmax += 1
                 
-            res.append((Point(x=xmin, y=ymin), Point(x=xmax, y=ymax)))
+            res.append(((Point(x=xmin, y=ymin), Point(x=xmax, y=ymax)),i))
         return res
 
     def _do_segmentation(
@@ -358,18 +397,21 @@ class Segmenter:
     ):
 
         """
-        делает подразбиение пока метки пользователя не будут в разных супер пикселях
-        и зануляет подразбитые суперпиксели для закраски маркером которые на них попал
+        Делает подразбиение пока метки пользователя
+        не будут в разных супер пикселях
+        и зануляет суперпиксели отмеченые методом анализа соседних областей
 
+        Зануление для того, чтобы метод mark_regions их не подразбивал
+        
         :param nums_of_regions_to_reassign: пиксели для подразбиения
         :param new_marker_mask: маска со штрихами
         :param filled_mask: закрашенная маска - ИЗМЕНЯЕТСЯ методом
         :return: nothing
         """
 
-        crops = self._make_crops(nums_of_regions_to_reassign)
+        crops_with_num = self._make_crops(nums_of_regions_to_reassign)
 
-        for crop, i in zip(crops, nums_of_regions_to_reassign):
+        for crop, i in crops_with_num:
             up_left, down_right = crop
             row_slice = slice(up_left.y, down_right.y + 1)
             column_slice = slice(up_left.x, down_right.x + 1)
@@ -388,7 +430,7 @@ class Segmenter:
                 raise ValueError("Two markers in one superpixel")
 
             # если нет штрихов, то пиксель закрасил метод, а не user
-            prev_marker_idx = max(m_idx)
+            prev_marker_idx = m_idx[-1] # так как отсортированный то это максимальный элемент
             marked_by_user = True if prev_marker_idx > 0 else False
 
             if not marked_by_user:
@@ -407,6 +449,7 @@ class Segmenter:
                 numeration_start=1 + self._last_num_of_superpixels,
             )
 
+            # TODO закомментить отладочный вывод
             keks = np.unique(self._regions)
             print(f"OLD N OF REGIONS {keks.size} and max is {keks[-1]}")
             ic(n_new_superpixels)
@@ -424,14 +467,18 @@ class Segmenter:
                 )
             )
 
+            # TODO закомментить отладочный вывод
             keks_new = np.unique(self._regions)
             print(
                 f"NEW N OF REGIONS {keks_new.size} and max is {keks_new[-1]},\nmust be n = {keks.size + n_new_superpixels -1} and max = {keks[-1]+n_new_superpixels}"
             )
 
+            # TODO list = lisr[1:] так как list отстортирован
             new_superpixels_under_new_marks = new_superpixels_under_new_marks[
                 new_superpixels_under_new_marks != -1
             ]
+            
+            # TODO закомментить отладочный вывод
             print(
                 f"new pixels under NEW marks in common numeration{new_superpixels_under_new_marks}"
             )
@@ -443,28 +490,45 @@ class Segmenter:
 
     # возвращет номера суперпикселей вокруг
     # TODO поменять этот метод, чтобы возраващал ток соседние суперпиксели, а не шарился по всему изображеию
-    def _superpixels_around(self, region_num: int, radius: int):
-        if radius == 0:
-            return []
-        indexes = np.where(self._regions == region_num)
-        length = indexes[0].shape[0]
-        indexes = list(zip(indexes[0], indexes[1]))
-        center_idx = indexes[length // 2]
-        y, x = center_idx
+    def _empty_superpixels_around(self, region_num: int):
+        ic(f"looking neighbors for {region_num}")
+        region_mask = self.regions == region_num
+        idxs = np.where(region_mask)
+        
+        only_borders = region_mask.copy()
+        
+        vectors = [-1, 1]
+        for i in vectors:
+            for j in vectors:
+                idxs0 = idxs[0] + i
+                idxs1 = idxs[1] + j
+                
+                idxs_inside_image = np.logical_and.reduce((
+                    idxs0 >= 0,
+                    idxs0 < self.image_height,
+                    idxs1 >= 0,
+                    idxs1 < self.image_width
+                ))
+                
+                idxs0 = idxs0[idxs_inside_image]
+                idxs1 = idxs1[idxs_inside_image]
+                only_borders[idxs0, idxs1] = True
+        only_borders[idxs] = False
+        neighbors = list(np.unique(self.regions[only_borders]))
+        
+        crops_with_num = self._make_crops(neighbors)
 
-        height, width = self._regions.shape
-        x1, y1, x2, y2 = x - radius, y - radius, x + radius, y + radius
-        if x1 < 0:
-            x1 = 0
-        if y1 < 0:
-            y1 = 0
-        if x2 > width:
-            x2 = width - 1
-        if y2 > height:
-            y2 = height - 1
+        for crop, i in crops_with_num:
+            up_left, down_right = crop
+            row_slice = slice(up_left.y, down_right.y + 1)
+            column_slice = slice(up_left.x, down_right.x + 1)
 
-        return list(np.unique(self._regions[y1 : y2 + 1, x1 : x2 + 1]))
-
+            region_mask = self.regions[row_slice, column_slice] == i
+            if np.any(self._mask[row_slice, column_slice][region_mask] != 0):
+                del neighbors[bisect.bisect_left(neighbors, i)]
+        return neighbors
+    
+    # TODO сделать получение свойств для кропа, а не сомтреть малюсенький суперпиксель на целой маске
     def _region_property(self, number: int) -> Dict[str, float]:
         mask = self._regions == number
         count = np.sum(mask)

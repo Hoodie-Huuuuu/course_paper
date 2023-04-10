@@ -372,11 +372,13 @@ class Application(Frame):
     # установка значения ползунка чувствительности [ ]
     def sens_changed(self, val):
         nothing_is_drawn = not np.any(self.mask)
+        self.sens_val_scale = float(val)
+        
         if nothing_is_drawn:
             return
 
-        self.sens_val_scale = float(val)
-
+        print(self.sens_val_scale)
+        
         self.stub.sendNewSens(pb2.SensitivityValue(value=self.sens_val_scale))
         self.mask = app_utils.Mask2D_to_array(
             self.stub.getMarkedMask2D(pb2.google_dot_protobuf_dot_empty__pb2.Empty())

@@ -198,3 +198,40 @@ def array_from_NdArray(arr):
 def in_sorted_list(elem, sorted_list):
     i = bisect.bisect_left(sorted_list, elem)
     return i != len(sorted_list) and sorted_list[i] == elem
+
+
+def properties_equal(
+    p1 : Dict[str, float],
+    p2 : Dict[str, float],
+    thresholds : Dict[str, float],
+    sens : float) -> bool:
+    
+    for prop1_name, prop1_val in p1.items():
+        if (
+            np.linalg.norm(p2[prop1_name] - prop1_val)
+            > thresholds[prop1_name] * sens
+        ):
+            return False
+
+    return True
+    
+
+# def get_marked_superpixels(mask : np.ndarray) -> Iterable[int]:
+#     """
+#     Возвращает отсортированные номера отмеченных суперпикселей
+#     0 - не отмеченная зона
+#     Все номера должны быть > 0
+#     Args:
+#         mask (np.ndarray): маска регионов (с номерами суперпикселей)
+#     """
+#     marked_zone = mask != 0
+#     old_marked_regions = np.where(
+#         marked_zone, mask, -1
+#     )  # может быть заполнена только числом -1
+
+#     nums = np.unique(old_marked_regions)
+#     sorted_nums_in_marked_zone = nums[1:]
+    
+#     return sorted_nums_in_marked_zone
+
+    
