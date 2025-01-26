@@ -38,7 +38,7 @@ class Segmenter:
         отрисованное изображение доступно через свойство rgb_marked_image
         """
 
-        # пароги для чувствительности
+        # пороги для чувствительности
         self._thresholds = {"mean": 30, "var": 30, "radius": 100}  # в пикселях
         # маркеры
         self._markers = markers
@@ -46,6 +46,7 @@ class Segmenter:
         
         self.image_height, self.image_width = image.height, image.width
         
+        self.current_method_params = method_params
 
         # стек состояний маски
         # на любом шаге лежит (предыдущая маска, новые штрихи на этой маске, номер маркера, деление на суперпиксели)
@@ -254,7 +255,8 @@ class Segmenter:
         save_marked_regions=True,
         **method_params,
     ):
-
+        self.current_method_params = method_params
+        
         # пронумерованы с 1
         new_regions, _ = utils.segmentation(
             image_repr=self._img_repr, method=method, **method_params,

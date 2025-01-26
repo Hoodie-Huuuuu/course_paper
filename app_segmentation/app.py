@@ -175,10 +175,9 @@ class Application(Frame):
         
         def slider_sens_changed(val):
             if not slider_sens_changed.called:
-                print(val)
                 slider_sens_changed.called = True
                 self.sens_changed(val)
-                frame_sens.after(200, reset_slider_changed)
+                frame_sens.after(100, reset_slider_changed)
         
         def reset_slider_changed():
             slider_sens_changed.called = False

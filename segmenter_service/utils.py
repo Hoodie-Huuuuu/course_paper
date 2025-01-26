@@ -4,6 +4,7 @@ from icecream import ic
 import numpy as np
 from skimage.segmentation import watershed, slic, felzenszwalb, quickshift
 import bisect 
+from skimage import filters
 
 import numpy.typing as npt
 
@@ -104,6 +105,7 @@ def additionally_split(
     old_marker_mask: npt.NDArray[np.bool],
     new_marker_mask: npt.NDArray[np.bool],
     n_segments: int = 5,
+    compactness: float = 0.001,
     numeration_start: int = 0,
 ):
     """
@@ -122,9 +124,19 @@ def additionally_split(
 
     while not good_segmentation:
         print("\ndo additional segmentation")
-        new_regions = slic(
-            img_crop, n_segments=n_segments, compactness=5, sigma=1, start_label=1
-        )
+        # new_regions = slic(
+        #     img_crop, n_segments=n_segments, compactness=5, sigma=1, start_label=1
+        # )
+        
+        gray_crop = np.dot(img_crop[...,:3], [0.299, 0.587, 0.114])
+        edges_crop = filters.sobel(gray_crop)
+        
+        new_regions = watershed(
+            edges_crop,
+            markers=n_segments,
+            compactness=compactness,
+        )  # 0.001
+        
         new_regions = np.where(zone_to_split, new_regions, -1)
 
         new_pixels_under_old_marks = np.unique(
